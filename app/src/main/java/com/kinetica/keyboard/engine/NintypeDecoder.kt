@@ -386,7 +386,7 @@ class NintypeDecoder(
                         score = finalScore,
                         dtwDistance = max(0.0f, 1.0f - (current.heuristicScore / 10.0f)),
                         frequencyWeight = freqWeight,
-                        bigramMultiplier = bigramMult,
+                        bigramMultiplier = bmApplied,
                         wordId = current.node,
                         source = source,
                         language = predictor.language,
