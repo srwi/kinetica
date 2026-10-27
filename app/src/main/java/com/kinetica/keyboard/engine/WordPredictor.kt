@@ -165,7 +165,7 @@ class WordPredictor(
     }
 
     /** The spelling shown for [node]: its most frequent display form, else the trie's own. */
-    private fun displayOf(node: Int): String =
+    internal fun displayOf(node: Int): String =
         forms[node]?.maxByOrNull { it.freqByte }?.display ?: trie.wordOf(node)
 
     /**
@@ -270,6 +270,15 @@ class WordPredictor(
         val prevWordId = prevWord?.let { trie.nodeFor(it) } ?: -1
 
         val heap = CandidateHeap(KineticaConstants.TOP_K)
+
+        // Nintype Multi-Finger Swipe Decoding Engine
+        if (tokens.any { it is SwipeToken }) {
+            val nintypeCandidates = NintypeDecoder(this, trie, bigrams, g, prevWordId, prevWord).decode(tokens)
+            for (c in nintypeCandidates) {
+                heap.offer(c)
+            }
+        }
+
         val seqs = MergeAlternatives.sequences(tokens, dtw)
         val patterns = ArrayList<List<Matcher>>(4)
         for (seq in seqs) {
