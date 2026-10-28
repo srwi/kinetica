@@ -179,6 +179,7 @@ internal class KeyboardViews(private val ime: KineticaIME) {
         ime.suggestionBar?.recentSwipeReversed = ime.config.recentSwipeReversed
         ime.suggestionBar?.retypeButton = ime.config.retypeButton
         ime.suggestionBar?.retypeButtonDp = ime.config.retypeButtonDp
+        ime.suggestionBar?.recentWordsEnabled = ime.config.recentWords
         // Resolved here, not in the views, so the language cell drops out below two enabled
         // languages on both surfaces alike.
         ime.commands.barActions = ActionRow.resolve(

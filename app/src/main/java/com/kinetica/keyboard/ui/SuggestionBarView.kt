@@ -73,6 +73,12 @@ class SuggestionBarView @JvmOverloads constructor(
 
         /** A recent word's alternative was tapped: [back] commits before the newest, 0 the newest. */
         fun onRecentPicked(back: Int, word: String)
+
+        /** A recent word was tapped to select it in the editor for typing over. */
+        fun onRecentSelected(back: Int, word: String)
+
+        /** Jump back to where the cursor was before selecting a recent word to type over. */
+        fun onJumpBack()
     }
 
     /**
@@ -144,6 +150,24 @@ class SuggestionBarView @JvmOverloads constructor(
 
     /** Recent words, oldest first, left of the live zones; empty turns the columns off. */
     var recent: List<RecentColumn> = emptyList()
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
+    /** Whether recent words feature is enabled (expands columns across the bar with a jump button). */
+    var recentWordsEnabled = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
+    /** Which recent word column is currently selected for typing over (-1 for none). */
+    var selectedRecentBack = -1
         set(value) {
             if (field != value) {
                 field = value
@@ -441,7 +465,7 @@ class SuggestionBarView @JvmOverloads constructor(
         // the partition would stay sized for the old width.
         val key = words.hashCode() * 31 * 31 + width * 31 + height +
             (if (retypeButton) 7919 else 0) + retypeButtonDp + recent.size * 131 + (tallFactor * 100).toInt() +
-            (textScale * 1000).toInt() * 17 + (if (compactWords) 104729 else 0)
+            (textScale * 1000).toInt() * 17 + (if (compactWords) 104729 else 0) + (if (recentWordsEnabled) 31337 else 0)
         if (key != zoneKey) {
             zoneKey = key
             zoneWidthsCache = zoneWidths()
@@ -538,10 +562,21 @@ class SuggestionBarView @JvmOverloads constructor(
         val baseY = h / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
         // Drawn before the early return: an empty bar is when a botched word most needs
         // restarting.
+        var rightEdge = w
         if (retypeButton) {
             val bw = retypeWidth()
-            canvas.drawText(RETYPE_GLYPH, w - bw / 2f, baseY, textPaint)
-            canvas.drawRect(w - bw - 1f, h * 0.2f, w - bw + 1f, h * 0.8f, dividerPaint)
+            val bx = rightEdge - bw / 2f
+            canvas.drawText(RETYPE_GLYPH, bx, baseY, textPaint)
+            canvas.drawRect(rightEdge - bw - 1f, h * 0.2f, rightEdge - bw + 1f, h * 0.8f, dividerPaint)
+            rightEdge -= bw
+        }
+        if (recentWordsEnabled) {
+            val jw = jumpWidth()
+            val jx = rightEdge - jw / 2f
+            val paint = if (selectedRecentBack >= 0) besidePaint else textPaint
+            canvas.drawText(JUMP_BACK_GLYPH, jx, baseY, paint)
+            canvas.drawRect(rightEdge - jw - 1f, h * 0.2f, rightEdge - jw + 1f, h * 0.8f, dividerPaint)
+            rightEdge -= jw
         }
         // Everything from here is laid out from the left edge of the live words.
         canvas.save()
@@ -551,6 +586,7 @@ class SuggestionBarView @JvmOverloads constructor(
     }
 
     private fun drawWords(canvas: Canvas, h: Float, vis: List<Suggestion>, orn: Float, baseY: Float) {
+        if (wordsWidth() <= 0f) return
         // Painted before the return below: an empty bar is the state this row exists for.
         val acts = visibleActions()
         if (acts.isNotEmpty()) {
@@ -659,6 +695,7 @@ class SuggestionBarView @JvmOverloads constructor(
             val left = c * colW
             val cx = left + colW / 2f
             val cells = arrayOf(col.above, col.word, col.below)
+            val isSelected = selectedRecentBack >= 0 && col.back == selectedRecentBack
             for (r in 0 until RECENT_ROWS) {
                 val word = cells[r] ?: continue
                 val top = r * rowH
@@ -666,6 +703,15 @@ class SuggestionBarView @JvmOverloads constructor(
                 if (r == 1) {
                     zoneRect.set(left + pad, top + pad, left + colW - pad, top + rowH - pad)
                     canvas.drawRoundRect(zoneRect, corner, corner, chipPaint)
+                    if (isSelected) {
+                        val style = besidePaint.style
+                        val stroke = besidePaint.strokeWidth
+                        besidePaint.style = Paint.Style.STROKE
+                        besidePaint.strokeWidth = 2f * density * orn
+                        canvas.drawRoundRect(zoneRect, corner, corner, besidePaint)
+                        besidePaint.style = style
+                        besidePaint.strokeWidth = stroke
+                    }
                 }
                 val y = top + rowH / 2f - (paint.descent() + paint.ascent()) / 2f
                 val shown = fit(word, paint, colW)
@@ -747,8 +793,8 @@ class SuggestionBarView @JvmOverloads constructor(
                 lastTouchY = ev.y
                 resetAdjust()
                 // Anywhere on the words, in either direction, once there is a page to go to.
-                // Not from the retype button or a recent column, which are not word zones.
-                pageSwipeCandidate = pageCount() > 1 && downZone != ZONE_RETYPE && downZone != ZONE_RECENT
+                // Not from the retype button, jump button or a recent column, which are not word zones.
+                pageSwipeCandidate = pageCount() > 1 && downZone != ZONE_RETYPE && downZone != ZONE_RECENT && downZone != ZONE_JUMP_BACK
                 pageSwipeConsumed = false
                 recentDownCell = if (downZone == ZONE_RECENT) recentCellAt(ev.x, ev.y) else -1
                 if (downZone == ZONE_RECENT) downWord = recentCellSuggestion(recentDownCell)?.word
@@ -870,16 +916,28 @@ class SuggestionBarView @JvmOverloads constructor(
                         }
                     } else if (zone == ZONE_RECENT && cell == recentDownCell) {
                         val col = recent.getOrNull(cell / RECENT_ROWS)
-                        val word = when (cell % RECENT_ROWS) {
-                            0 -> col?.above
-                            2 -> col?.below
-                            else -> null
-                        }
-                        if (col != null && word != null) {
-                            listener?.onRecentPicked(col.back, word)
-                            performClick()
+                        if (col != null) {
+                            val word = when (cell % RECENT_ROWS) {
+                                0 -> col.above
+                                2 -> col.below
+                                else -> null
+                            }
+                            if (word != null) {
+                                listener?.onRecentPicked(col.back, word)
+                                performClick()
+                            } else {
+                                listener?.onRecentSelected(col.back, col.word)
+                                performClick()
+                            }
                         }
                     }
+                    downZone = -1
+                    recycleTracker()
+                    return true
+                }
+                if (zone == ZONE_JUMP_BACK && downZone == ZONE_JUMP_BACK) {
+                    listener?.onJumpBack()
+                    performClick()
                     downZone = -1
                     recycleTracker()
                     return true
@@ -956,20 +1014,37 @@ class SuggestionBarView @JvmOverloads constructor(
     private fun retypeWidth(): Float =
         if (retypeButton) (retypeButtonDp * density).coerceAtMost(width / 4f) else 0f
 
+    /** Width of the jump-back button on the right edge, present whenever recent words is enabled. */
+    private fun jumpWidth(): Float =
+        if (recentWordsEnabled) (BarMetrics.retypeDp(retypeButtonDp) * density).coerceAtMost(width / 4f) else 0f
+
+    /** Combined width of all buttons on the right edge. */
+    private fun rightButtonsWidth(): Float =
+        jumpWidth() + retypeWidth()
+
     /** Width the word zones divide between them. */
-    private fun wordsWidth(): Float = width - retypeWidth() - wordsLeft()
+    private fun wordsWidth(): Float =
+        (width - rightButtonsWidth() - wordsLeft()).coerceAtLeast(0f)
 
     /** One row's height: the bar's own unless [tallFactor] made room for recent words. */
     private fun rowHeight(): Float = height / tallFactor.coerceAtLeast(1f)
 
-    private fun recentColumnWidth(): Float = width * RECENT_COLUMN_FRACTION
+    /** Bar width each recent-word column takes: fills the whole bar up to the right-side buttons. */
+    private fun recentColumnWidth(): Float {
+        if (recent.isEmpty()) return 0f
+        val available = (width - rightButtonsWidth()).coerceAtLeast(0f)
+        return available / recent.size
+    }
 
     /** Where the live words start: right of the recent-word columns. */
-    private fun wordsLeft(): Float = recent.size * recentColumnWidth()
+    private fun wordsLeft(): Float =
+        if (recent.isNotEmpty()) (width - rightButtonsWidth()).coerceAtLeast(0f) else 0f
 
     /** Column times [RECENT_ROWS] plus row, for a touch inside the recent-word columns. */
     private fun recentCellAt(x: Float, y: Float): Int {
-        val col = (x / recentColumnWidth()).toInt().coerceIn(0, (recent.size - 1).coerceAtLeast(0))
+        val colW = recentColumnWidth()
+        if (colW <= 0f) return -1
+        val col = (x / colW).toInt().coerceIn(0, (recent.size - 1).coerceAtLeast(0))
         val row = (y / (height.toFloat() / RECENT_ROWS)).toInt().coerceIn(0, RECENT_ROWS - 1)
         return col * RECENT_ROWS + row
     }
@@ -977,9 +1052,10 @@ class SuggestionBarView @JvmOverloads constructor(
     private fun zoneAt(xRaw: Float): Int {
         val vis = visible()
         if (width <= 0) return -1
-        // The button is not a word zone: it is outside the paging arithmetic, so MAX_ZONES,
-        // visible and pageCount ignore it.
+        // The buttons are not word zones: they are outside the paging arithmetic, so MAX_ZONES,
+        // visible and pageCount ignore them.
         if (retypeButton && xRaw >= width - retypeWidth()) return ZONE_RETYPE
+        if (recentWordsEnabled && xRaw >= width - rightButtonsWidth()) return ZONE_JUMP_BACK
         if (recent.isNotEmpty() && xRaw < wordsLeft()) return ZONE_RECENT
         val x = xRaw - wordsLeft()
         val acts = visibleActions()
@@ -1026,6 +1102,9 @@ class SuggestionBarView @JvmOverloads constructor(
         // The recent-word columns: negative too, so no word gesture starts there.
         const val ZONE_RECENT = -3
 
+        // Jump-back button to resume where you were before selecting a recent word to type over.
+        const val ZONE_JUMP_BACK = -4
+
         /** Rows in a recent-word column: the candidate above, the word, the next below. */
         const val RECENT_ROWS = 3
 
@@ -1044,5 +1123,8 @@ class SuggestionBarView @JvmOverloads constructor(
         // U+21BB. A symbol, not an icon: it themes with the text, scales with the bar and needs
         // no drawable.
         const val RETYPE_GLYPH = "\u21bb"
+
+        // U+21E5: Rightwards arrow to bar (⇥). Jump back / forward to resume typing point.
+        const val JUMP_BACK_GLYPH = "\u21e5"
     }
 }

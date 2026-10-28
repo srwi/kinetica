@@ -169,6 +169,10 @@ internal fun matchCase(written: CharSequence, word: String): String = when {
     else -> word
 }
 
+/** Destination cursor offset when jumping back from typing over a recent word. */
+internal fun recentJumpTarget(total: Int, savedAfter: Int): Int =
+    if (savedAfter >= 0) (total - savedAfter).coerceIn(0, total) else total
+
 private fun isRecentWordChar(c: Char): Boolean = c.isLetter() || c == '\''
 
 /** Separators allowed between two recent words: a space, punctuation, a quote. */

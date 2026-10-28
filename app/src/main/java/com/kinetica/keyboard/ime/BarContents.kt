@@ -34,6 +34,12 @@ internal class BarContents(private val ime: KineticaIME) {
     /** The last few commits and what each beat, for the recent-words bar. */
     val recentWords = RecentWords(RECENT_WORDS_KEPT)
 
+    /** Number of characters trailing cursor saved when tapping a recent word to type over. */
+    var jumpCharsAfterSaved: Int = -1
+
+    /** Which recent word column is currently selected in the editor for typing over. */
+    var selectedRecentBack: Int = -1
+
     // The strip's words as the commit showed them, and whether the bar shows its one alternative
     // beside the next words instead; see showBeside.
     var stripOptions: List<String> = emptyList()
@@ -42,22 +48,23 @@ internal class BarContents(private val ime: KineticaIME) {
     /**
      * Puts the recent words the editor still holds on the bar, oldest first, or takes them
      * down. The correction strip already shows the newest commit, so that one is left out
-     * while it is up.
+     * while it is up. Fills the whole suggestion bar with recent words when enabled.
      */
     fun pushRecent() {
         val bar = ime.suggestionBar ?: return
         val entries = recentWords.entries()
-        // With a selection up, the text before the cursor is not what the columns name, and a
-        // rewrite would replace the selection too (the reason the strip clears there).
-        if (!ime.config.recentWords || ime.editorState.privateMode || entries.isEmpty() || ime.selectionLength() != 0) {
+        if (!ime.config.recentWords || ime.editorState.privateMode || entries.isEmpty()) {
             bar.recent = emptyList()
+            bar.selectedRecentBack = -1
             return
         }
-        val before = ime.ich.textBeforeCursor(RECENT_TAIL_CHARS) ?: ""
+        val selText = ime.ich.selectedText()?.toString() ?: ""
+        val before = (ime.ich.textBeforeCursor(RECENT_TAIL_CHARS) ?: "").toString() + selText
         val aligned = alignRecent(before, ime.wordState.tentativeLength, entries.map { it.word })
         val skip = if (ime.lastCommit.stripWord != null) 1 else 0
-        val cols = ArrayList<SuggestionBarView.RecentColumn>(RECENT_BAR_COLUMNS)
-        for (back in skip until minOf(aligned.size, skip + RECENT_BAR_COLUMNS)) {
+        val maxCols = RECENT_BAR_COLUMNS
+        val cols = ArrayList<SuggestionBarView.RecentColumn>(maxCols)
+        for (back in skip until minOf(aligned.size, skip + maxCols)) {
             val e = entries[entries.size - 1 - back]
             val shown = before.subSequence(before.length - aligned[back], before.length - aligned[back] + e.word.length)
             val alts = notBlocked(sameLanguage(e.alternatives, e.languages, e.word, ime.config.language), ime.residents.blockedSpellings)
@@ -75,7 +82,11 @@ internal class BarContents(private val ime: KineticaIME) {
                 ),
             )
         }
+        if (cols.isEmpty() && bar.recent.isNotEmpty() && selectedRecentBack >= 0) {
+            return
+        }
         bar.recent = cols
+        bar.selectedRecentBack = selectedRecentBack
     }
 
     /** A recent word's alternative as its column shows it: cased like the word, then the pronoun rule. */
@@ -138,6 +149,51 @@ internal class BarContents(private val ime: KineticaIME) {
         for (m in recentPairMoves(prev, entry.word, replacement, next)) {
             ime.learner.adjustPair(m.prev, m.word, pairMoveLanguage(m, oldLang, lang), m.delta)
         }
+        pushRecent()
+    }
+
+    /**
+     * Tapping a word in recent words selects it in the editor so it can be directly typed over.
+     * The distance from cursor to end of text is saved so the jump-back button can return.
+     */
+    fun onRecentSelected(back: Int, word: String) {
+        val entries = recentWords.entries()
+        val selText = ime.ich.selectedText()?.toString() ?: ""
+        val before = (ime.ich.textBeforeCursor(RECENT_TAIL_CHARS) ?: "").toString() + selText
+        val aligned = alignRecent(before, ime.wordState.tentativeLength, entries.map { it.word })
+        if (back !in aligned.indices) {
+            DecodeTrace.log { "  recent select refused back=$back" }
+            return
+        }
+        val entry = entries[entries.size - 1 - back]
+        val span = aligned[back]
+        if (jumpCharsAfterSaved < 0) {
+            val after = ime.ich.textAfterCursor(5000) ?: ""
+            jumpCharsAfterSaved = after.length
+        }
+        val wordStart = (ime.selEnd - span).coerceAtLeast(0)
+        val wordEnd = wordStart + entry.word.length
+        ime.ich.setSelection(wordStart, wordEnd)
+        ime.expectAt(wordStart, wordEnd)
+        selectedRecentBack = back
+        ime.suggestionBar?.selectedRecentBack = back
+        DecodeTrace.log { "  recent select back=$back word=${entry.word} span=$span start=$wordStart end=$wordEnd savedAfter=$jumpCharsAfterSaved" }
+    }
+
+    /**
+     * Jumps back to where the user was when they tapped the recent word to type over.
+     */
+    fun onJumpBack() {
+        val before = ime.ich.textBeforeCursor(5000) ?: ""
+        val after = ime.ich.textAfterCursor(5000) ?: ""
+        val total = before.length + after.length
+        val target = recentJumpTarget(total, jumpCharsAfterSaved)
+        ime.ich.setSelection(target, target)
+        ime.expectAt(target)
+        DecodeTrace.log { "  jump back target=$target total=$total savedAfter=$jumpCharsAfterSaved" }
+        jumpCharsAfterSaved = -1
+        selectedRecentBack = -1
+        ime.suggestionBar?.selectedRecentBack = -1
         pushRecent()
     }
 
@@ -424,14 +480,14 @@ internal class BarContents(private val ime: KineticaIME) {
     }
 
     companion object {
-        /** Commits the recent-words bar remembers: one more than it shows, for the strip's. */
-        const val RECENT_WORDS_KEPT = 3
+        /** Commits the recent-words bar remembers: keeps more words so the whole bar can be filled. */
+        const val RECENT_WORDS_KEPT = 20
 
-        /** Recent-word columns on the bar; two leave three fifths of it to the live words. */
-        const val RECENT_BAR_COLUMNS = 2
+        /** Recent-word columns on the bar; fills the whole suggestion bar. */
+        const val RECENT_BAR_COLUMNS = 8
 
-        /** Editor text read to find the recent words again: three long words and their gaps. */
-        const val RECENT_TAIL_CHARS = 96
+        /** Editor text read to find the recent words again. */
+        const val RECENT_TAIL_CHARS = 500
 
         /** Editor text read to find the word a prediction follows: one long word and its space. */
         const val PREDICT_TAIL_CHARS = 48

@@ -379,6 +379,11 @@ class KineticaIME : InputMethodService(), GestureEngine.Listener, WordComposer.C
         barContents.updateBarWordPending()
         keyboardView?.setShiftUppercase(shift.isShifted)
         views.closeEmojiPicker()
+        if (!restarting) {
+            barContents.jumpCharsAfterSaved = -1
+            barContents.selectedRecentBack = -1
+            suggestionBar?.selectedRecentBack = -1
+        }
         val onLetters = keyboardView?.showsLetters ?: true
         // Left by hand in the meantime, the pad is no longer the field's to take down.
         if (onLetters) views.numpadAuto = false
@@ -401,6 +406,9 @@ class KineticaIME : InputMethodService(), GestureEngine.Listener, WordComposer.C
     override fun onFinishInput() {
         commit.abandonWord()
         composer?.reset()
+        barContents.jumpCharsAfterSaved = -1
+        barContents.selectedRecentBack = -1
+        suggestionBar?.selectedRecentBack = -1
         // A notice belongs to the field it was shown in, not to the next one.
         commands.clearSpacebarNotice()
         super.onFinishInput()
@@ -427,6 +435,10 @@ class KineticaIME : InputMethodService(), GestureEngine.Listener, WordComposer.C
         if (verdict == SelectionLedger.Verdict.USER) {
             backspace.autocorrectUndo = null
             gestureUndo.forgetCommitted()
+            if (selectionLength() == 0 && barContents.selectedRecentBack >= 0) {
+                barContents.selectedRecentBack = -1
+                suggestionBar?.selectedRecentBack = -1
+            }
         }
         if (verdict != SelectionLedger.Verdict.USER) {
             DecodeTrace.log {
@@ -875,6 +887,16 @@ class KineticaIME : InputMethodService(), GestureEngine.Listener, WordComposer.C
         override fun onRecentPicked(back: Int, word: String) {
             views.vibrateForKeyPress()
             barContents.onRecentPicked(back, word)
+        }
+
+        override fun onRecentSelected(back: Int, word: String) {
+            views.vibrateForKeyPress()
+            barContents.onRecentSelected(back, word)
+        }
+
+        override fun onJumpBack() {
+            views.vibrateForKeyPress()
+            barContents.onJumpBack()
         }
     }
 
