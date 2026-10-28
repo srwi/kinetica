@@ -397,7 +397,8 @@ class WordPredictor(
     /**
      * Integrates Nintype multi-finger swipe candidates with Kinetica passes:
      * - When passes found nothing (e.g. dual simultaneous swipes), Nintype provides the full candidate list.
-     * - When passes already have candidates, preserves passes' ranking and fills free slots with Nintype candidates.
+     * - When passes already have candidates, preserves passes' ranking and fills free slots with Nintype candidates
+     *   ensuring monotonically non-increasing score ordering.
      */
     private fun mergeNintype(
         passes: List<WordCandidate>,
@@ -409,9 +410,12 @@ class WordPredictor(
 
         val known = passes.mapTo(HashSet()) { it.word }
         val out = ArrayList<WordCandidate>(passes)
+        var floorScore = passes.last().score
         for (c in nintype) {
             if (c.word !in known && out.size < KineticaConstants.TOP_K) {
-                out.add(c)
+                val clampedScore = min(c.score, floorScore)
+                out.add(c.copy(score = clampedScore))
+                floorScore = clampedScore
             }
         }
         return out
