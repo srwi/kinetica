@@ -270,15 +270,6 @@ class WordPredictor(
         val prevWordId = prevWord?.let { trie.nodeFor(it) } ?: -1
 
         val heap = CandidateHeap(KineticaConstants.TOP_K)
-
-        // Nintype Multi-Finger Swipe Decoding Engine
-        if (tokens.any { it is SwipeToken }) {
-            val nintypeCandidates = NintypeDecoder(this, trie, bigrams, g, prevWordId, prevWord).decode(tokens)
-            for (c in nintypeCandidates) {
-                heap.offer(c)
-            }
-        }
-
         val seqs = MergeAlternatives.sequences(tokens, dtw)
         val patterns = ArrayList<List<Matcher>>(4)
         for (seq in seqs) {
@@ -298,6 +289,10 @@ class WordPredictor(
         // would see without it. An all-tap buffer always takes the passes, which own tap
         // completion and transposition.
         val engine = KineticaConstants.SEARCH_ENGINE
+        if (engine == 4 && tokens.any { it is SwipeToken }) {
+            val nintypeCandidates = NintypeDecoder(this, trie, bigrams, g, prevWordId, prevWord).decode(tokens)
+            return finish(nintypeCandidates, startNs)
+        }
         val beamReads = beam && engine != 1 && ThumbBeam.applies(seqs.first(), patterns.firstOrNull())
         if (beamReads && engine == 2) {
             ThumbBeam(this, g, seqs.first(), patterns.first(), heap, prevWordId, prevWord).run()
@@ -378,15 +373,91 @@ class WordPredictor(
                 ).run()
             }
         }
-        if (!beamReads) return finish(heap.sortedByScoreDesc(), startNs)
-        // The beam scores into a copy of the passes' heap, so its abandon budget starts where
-        // theirs ended, and may add at most BEAM_MAX_NEW words: a better reading still leads,
-        // and the passes' own list keeps its order behind it.
         val passes = heap.sortedByScoreDesc()
-        val beamHeap = CandidateHeap(KineticaConstants.TOP_K)
-        for (c in passes) beamHeap.offer(c)
-        ThumbBeam(this, g, seqs.first(), patterns.first(), beamHeap, prevWordId, prevWord).run()
-        return finish(mergeBeam(passes, beamHeap.sortedByScoreDesc()), startNs)
+        val withBeam = if (beamReads) {
+            val beamHeap = CandidateHeap(KineticaConstants.TOP_K)
+            for (c in passes) beamHeap.offer(c)
+            ThumbBeam(this, g, seqs.first(), patterns.first(), beamHeap, prevWordId, prevWord).run()
+            mergeBeam(passes, beamHeap.sortedByScoreDesc())
+        } else {
+            passes
+        }
+
+        // Nintype Multi-Finger Swipe Decoding Engine Integration
+        val withNintype = if (tokens.any { it is SwipeToken }) {
+            val nintypeCands = NintypeDecoder(this, trie, bigrams, g, prevWordId, prevWord).decode(tokens)
+            mergeNintype(withBeam, nintypeCands, tokens)
+        } else {
+            withBeam
+        }
+
+        return finish(withNintype, startNs)
+    }
+
+    /**
+     * Integrates Nintype multi-finger swipe candidates with Kinetica passes:
+     * - Preserves rescued candidates so low-confidence fallback guarantees remain intact.
+     * - Grants primary leadership to Nintype on dual simultaneous swipe gestures.
+     * - Enhances single swipes with Nintype outscoring or free slot filling.
+     */
+    private fun mergeNintype(
+        passes: List<WordCandidate>,
+        nintype: List<WordCandidate>,
+        tokens: List<InputToken>,
+    ): List<WordCandidate> {
+        if (nintype.isEmpty()) return passes
+        if (passes.isEmpty()) return nintype
+
+        // If passes' lead was rescued, keep that provenance and lead intact
+        val passLead = passes.first()
+        if (passLead.source == WordCandidate.Source.RESCUE) {
+            val known = passes.mapTo(HashSet()) { it.word }
+            val out = ArrayList<WordCandidate>(passes)
+            for (c in nintype) {
+                if (c.word !in known && out.size < KineticaConstants.TOP_K) {
+                    out.add(c)
+                }
+            }
+            return out
+        }
+
+        // Dual-finger swipe gesture: Nintype's multi-finger decoding engine takes priority
+        val isDualSwipe = tokens.any { it.streamId == StreamId.LEFT && it is SwipeToken } &&
+            tokens.any { it.streamId == StreamId.RIGHT && it is SwipeToken }
+        if (isDualSwipe) {
+            val known = nintype.mapTo(HashSet()) { it.word }
+            val out = ArrayList<WordCandidate>(nintype)
+            for (p in passes) {
+                if (p.word !in known && out.size < KineticaConstants.TOP_K) {
+                    out.add(p)
+                }
+            }
+            return out
+        }
+
+        // Single swipe / interleaved inputs:
+        // Merge nintype candidates into passes: outscoring candidates or filling free slots
+        val known = passes.mapTo(HashSet()) { it.word }
+        val out = ArrayList<WordCandidate>(KineticaConstants.TOP_K)
+        val leadScore = passes.first().score
+        var added = 0
+        var filled = 0
+        for (c in nintype) {
+            if (c.word in known) continue
+            if (added < KineticaConstants.BEAM_MAX_NEW && c.score > leadScore) {
+                out.add(c)
+                added++
+            } else if (passes.size + added + filled < KineticaConstants.TOP_K) {
+                out.add(c)
+                filled++
+            }
+        }
+        val byWord = nintype.associateBy { it.word }
+        for (c in passes) {
+            out.add(byWord[c.word]?.takeIf { it.score > c.score } ?: c)
+        }
+        out.sortByDescending { it.score }
+        return if (out.size > KineticaConstants.TOP_K) out.subList(0, KineticaConstants.TOP_K) else out
     }
 
     /**
