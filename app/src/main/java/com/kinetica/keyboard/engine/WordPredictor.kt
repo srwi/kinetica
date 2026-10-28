@@ -396,9 +396,8 @@ class WordPredictor(
 
     /**
      * Integrates Nintype multi-finger swipe candidates with Kinetica passes:
-     * - Preserves rescued candidates so low-confidence fallback guarantees remain intact.
-     * - Grants primary leadership to Nintype on dual simultaneous swipe gestures.
-     * - Enhances single swipes with Nintype outscoring or free slot filling.
+     * - When passes found nothing (e.g. dual simultaneous swipes), Nintype provides the full candidate list.
+     * - When passes already have candidates, preserves passes' ranking and fills free slots with Nintype candidates.
      */
     private fun mergeNintype(
         passes: List<WordCandidate>,
@@ -408,56 +407,14 @@ class WordPredictor(
         if (nintype.isEmpty()) return passes
         if (passes.isEmpty()) return nintype
 
-        // If passes' lead was rescued, keep that provenance and lead intact
-        val passLead = passes.first()
-        if (passLead.source == WordCandidate.Source.RESCUE) {
-            val known = passes.mapTo(HashSet()) { it.word }
-            val out = ArrayList<WordCandidate>(passes)
-            for (c in nintype) {
-                if (c.word !in known && out.size < KineticaConstants.TOP_K) {
-                    out.add(c)
-                }
-            }
-            return out
-        }
-
-        // Dual-finger swipe gesture: Nintype's multi-finger decoding engine takes priority
-        val isDualSwipe = tokens.any { it.streamId == StreamId.LEFT && it is SwipeToken } &&
-            tokens.any { it.streamId == StreamId.RIGHT && it is SwipeToken }
-        if (isDualSwipe) {
-            val known = nintype.mapTo(HashSet()) { it.word }
-            val out = ArrayList<WordCandidate>(nintype)
-            for (p in passes) {
-                if (p.word !in known && out.size < KineticaConstants.TOP_K) {
-                    out.add(p)
-                }
-            }
-            return out
-        }
-
-        // Single swipe / interleaved inputs:
-        // Merge nintype candidates into passes: outscoring candidates or filling free slots
         val known = passes.mapTo(HashSet()) { it.word }
-        val out = ArrayList<WordCandidate>(KineticaConstants.TOP_K)
-        val leadScore = passes.first().score
-        var added = 0
-        var filled = 0
+        val out = ArrayList<WordCandidate>(passes)
         for (c in nintype) {
-            if (c.word in known) continue
-            if (added < KineticaConstants.BEAM_MAX_NEW && c.score > leadScore) {
+            if (c.word !in known && out.size < KineticaConstants.TOP_K) {
                 out.add(c)
-                added++
-            } else if (passes.size + added + filled < KineticaConstants.TOP_K) {
-                out.add(c)
-                filled++
             }
         }
-        val byWord = nintype.associateBy { it.word }
-        for (c in passes) {
-            out.add(byWord[c.word]?.takeIf { it.score > c.score } ?: c)
-        }
-        out.sortByDescending { it.score }
-        return if (out.size > KineticaConstants.TOP_K) out.subList(0, KineticaConstants.TOP_K) else out
+        return out
     }
 
     /**
