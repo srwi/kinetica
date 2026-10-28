@@ -6,9 +6,7 @@ import com.kinetica.keyboard.engine.models.StreamId
 import com.kinetica.keyboard.engine.models.SwipeToken
 import com.kinetica.keyboard.engine.models.TapToken
 import com.kinetica.keyboard.engine.models.WordCandidate
-import java.util.PriorityQueue
 import kotlin.math.abs
-import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -21,6 +19,7 @@ import kotlin.math.sqrt
  * Reverse-engineered bit-by-bit from libgl2jni.so (ARM 32-bit ELF):
  * - Key-unit coordinate normalization (kw).
  * - 4-point inflection/curvature turn detection (syncCurvyRVA >= 0.30f).
+ * - Key apex closest-approach anchor detection.
  * - Continuous soft-index cross-finger time synchronization lattice.
  * - Distance-to-coverage curve (FastCurveMapper) with power alpha = 0.60f.
  * - 4-tier Priority Queue Buckets (Same-finger, Hand-switch, Apostrophe, Skip).
@@ -135,30 +134,30 @@ class NintypeDecoder(
             get() = isCurvatureTurn || isBoundaryPoint || dwellRatio > 0.3f
     }
 
+    data class Anchor(
+        val fingerId: Int, // 0 = Left, 1 = Right
+        val index: Int,
+        val pt: MooPoint,
+        val t: Long,
+        val cands: List<TravKey>,
+        val isVisitation: Boolean,
+    )
+
     data class PredPath(
         val node: Int,
         val word: String,
-        val fingerId: Int, // 0 = Left, 1 = Right
-        val pointIndex: Int,
-        val otherPointIndex: Int,
+        val leftAnchorIdx: Int,  // Last consumed anchor on Left finger (-1 if none)
+        val rightAnchorIdx: Int, // Last consumed anchor on Right finger (-1 if none)
+        val activeFinger: Int,   // 0 = Left, 1 = Right
+        val lastTime: Long,
         val skipCount: Int,
-        val branchMode: Int, // 0 = direct, 1 = switch, 2 = apos, 3 = skip
+        val branchMode: Int,     // 0 = same, 1 = switch, 2 = apos, 3 = skip
         var heuristicScore: Float,
         var minScoreSeen: Float,
         val charCount: Int = word.length,
     ) : Comparable<PredPath> {
         override fun compareTo(other: PredPath): Int {
-            // Priority queue orders highest score first
             return other.heuristicScore.compareTo(this.heuristicScore)
-        }
-
-        fun updateScore(oldMult: Float, newMult: Float) {
-            if (oldMult > 1e-6f) {
-                heuristicScore *= (newMult / oldMult)
-            }
-            if (heuristicScore < minScoreSeen) {
-                minScoreSeen = heuristicScore
-            }
         }
 
         fun maybePrune(cutoff: Float = 2.0f): Boolean {
@@ -168,9 +167,9 @@ class NintypeDecoder(
     }
 
     // =========================================================================
-    // 3. Pre-Processing & Feature Extraction
+    // 3. Pre-Processing, Feature Extraction & Anchor Harvesting
     // =========================================================================
-    private fun extractPoints(tokens: List<InputToken>, targetStream: StreamId): List<MooPoint> {
+    private fun extractAnchors(tokens: List<InputToken>, targetStream: StreamId, fingerId: Int): List<Anchor> {
         val streamTokens = tokens.filter { it.streamId == targetStream }.sortedBy { it.tStart }
         if (streamTokens.isEmpty()) return emptyList()
 
@@ -183,7 +182,6 @@ class NintypeDecoder(
                     }
                 }
                 is TapToken -> {
-                    // Represent tap as anchor point with duration
                     rawPoints.add(MooPoint(token.x, token.y, token.tStart, isBoundaryPoint = true))
                     if (token.tEnd > token.tStart) {
                         val dwell = min(1.0f, (token.tEnd - token.tStart) / 150f)
@@ -194,7 +192,7 @@ class NintypeDecoder(
         }
         if (rawPoints.isEmpty()) return emptyList()
 
-        // Resample spatially to ~0.15 kw for stable curvature & speed estimation
+        // Resample spatially to ~0.15 kw
         val resampled = ArrayList<MooPoint>()
         resampled.add(rawPoints.first().copy(isBoundaryPoint = true))
 
@@ -207,7 +205,7 @@ class NintypeDecoder(
             val dt = max(1L, curr.t - last.t)
 
             if (d >= 0.15f || curr.isBoundaryPoint || i == rawPoints.size - 1) {
-                val speed = (d / (dt / 1000f)) * geometry.keyWidthPx // in px/s
+                val speed = (d / (dt / 1000f)) * geometry.keyWidthPx
                 val dwell = if (speed < 15f && dt >= 100L) min(1.0f, dt / 150f) else 0f
                 resampled.add(curr.copy(speed = speed, dwellRatio = dwell))
                 last = curr
@@ -215,24 +213,14 @@ class NintypeDecoder(
         }
         resampled.last().isBoundaryPoint = true
 
-        // 4-Point Curvature Detection (syncCurvyRVA >= 0.30f)
-        for (i in 2 until resampled.size - 1) {
-            val pPrev2 = resampled[i - 2]
-            val pCurr = resampled[i]
-            val dspan = max(abs(pCurr.x - pPrev2.x), abs(pCurr.y - pPrev2.y))
-            if (dspan >= 0.30f) {
-                resampled[i].isCurvatureTurn = true
-            }
-        }
-
-        // Candidate Key Harvesting (syncCoverage & sortTravs)
+        // Candidate Key Harvesting (syncCoverage) on each resampled point
         for (pt in resampled) {
             for (code in 0 until geometry.alphabet.letterCount) {
                 if (!geometry.hasKey(code)) continue
                 val dist = geometry.distToCenter(pt.x, pt.y, code)
                 if (dist <= 1.50f) {
                     val rawCov = coverageCurve.get(dist)
-                    val finalCov = rawCov.pow(0.60f) // Normal typing exponent
+                    val finalCov = rawCov.pow(0.60f)
                     if (finalCov > 0.05f) {
                         val ch = geometry.alphabet.charOf(code)
                         pt.travKeys.add(TravKey(code, ch, dist, finalCov))
@@ -242,43 +230,73 @@ class NintypeDecoder(
             pt.travKeys.sortByDescending { it.coverageScore }
         }
 
-        return resampled
-    }
-
-    // =========================================================================
-    // 4. Cross-Finger Soft Index Lattice Synchronization
-    // =========================================================================
-    private fun syncCrossFingerLattice(left: List<MooPoint>, right: List<MooPoint>) {
-        fun sync(src: List<MooPoint>, target: List<MooPoint>) {
-            if (target.size < 2) {
-                for (pt in src) pt.otherFingerSoftIndex = 0f
-                return
+        // Extract key visitation anchors:
+        // 1. Boundary points (start and end)
+        // 2. Local minimum distance apices to keys (closest approach)
+        // 3. Direction turns (curvature inflection)
+        // 4. Dwells (speed drops / pauses)
+        val anchors = ArrayList<Anchor>()
+        fun addAnchor(pt: MooPoint) {
+            if (pt.travKeys.isEmpty()) return
+            // Avoid duplicate adjacent anchors of the same top key within 0.25 kw
+            val topKey = pt.travKeys.first().code
+            if (anchors.isNotEmpty() && anchors.last().cands.firstOrNull()?.code == topKey) {
+                val distBetween = sqrt((pt.x - anchors.last().pt.x).pow(2) + (pt.y - anchors.last().pt.y).pow(2))
+                if (distBetween < 0.25f) return
             }
-            for (pt in src) {
-                if (pt.t <= target.first().t) {
-                    pt.otherFingerSoftIndex = 0f
-                } else if (pt.t >= target.last().t) {
-                    pt.otherFingerSoftIndex = (target.size - 1).toFloat()
-                } else {
-                    for (j in 0 until target.size - 1) {
-                        val t0 = target[j].t
-                        val t1 = target[j + 1].t
-                        if (pt.t in t0..t1) {
-                            val dt = (t1 - t0).toFloat()
-                            val alpha = if (dt > 1e-4f) (pt.t - t0) / dt else 0f
-                            pt.otherFingerSoftIndex = j + alpha
-                            break
-                        }
+            anchors.add(Anchor(fingerId, anchors.size, pt, pt.t, pt.travKeys, pt.isVisitationPoint))
+        }
+
+        addAnchor(resampled.first())
+
+        for (i in 1 until resampled.size - 1) {
+            val pt = resampled[i]
+            val prevPt = resampled[i - 1]
+            val nextPt = resampled[i + 1]
+
+            // 1. Closest approach apex to a key
+            var isApex = false
+            for (cand in pt.travKeys) {
+                val dPrev = geometry.distToCenter(prevPt.x, prevPt.y, cand.code)
+                val dNext = geometry.distToCenter(nextPt.x, nextPt.y, cand.code)
+                if (cand.dist < 0.85f && cand.dist <= dPrev && cand.dist <= dNext) {
+                    isApex = true
+                    break
+                }
+            }
+
+            // 2. Curvature turn (angle deflection > 35 degrees)
+            var isTurn = false
+            if (i >= 1 && i + 1 < resampled.size) {
+                val p0 = prevPt
+                val p1 = pt
+                val p2 = nextPt
+                val v1x = p1.x - p0.x
+                val v1y = p1.y - p0.y
+                val v2x = p2.x - p1.x
+                val v2y = p2.y - p1.y
+                val dot = v1x * v2x + v1y * v2y
+                val len1 = sqrt(v1x * v1x + v1y * v1y)
+                val len2 = sqrt(v2x * v2x + v2y * v2y)
+                if (len1 > 0.02f && len2 > 0.02f) {
+                    val cosTheta = dot / (len1 * len2)
+                    if (cosTheta < 0.82f) {
+                        isTurn = true
                     }
                 }
             }
+
+            if (isApex || isTurn || pt.dwellRatio > 0.2f) {
+                addAnchor(pt)
+            }
         }
-        sync(left, right)
-        sync(right, left)
+
+        addAnchor(resampled.last())
+        return anchors
     }
 
     // =========================================================================
-    // 5. Vowel Bitmask Double-Letter Penalty (0x00104111)
+    // 4. Vowel Bitmask Double-Letter Penalty (0x00104111)
     // =========================================================================
     private fun isVowel(c: Char): Boolean {
         val upper = c.uppercaseChar()
@@ -293,24 +311,22 @@ class NintypeDecoder(
     }
 
     // =========================================================================
-    // 6. Decode Engine
+    // 5. Decode Engine
     // =========================================================================
     fun decode(tokens: List<InputToken>): List<WordCandidate> {
-        val left = extractPoints(tokens, StreamId.LEFT)
-        val right = extractPoints(tokens, StreamId.RIGHT)
-        syncCrossFingerLattice(left, right)
+        val leftAnchors = extractAnchors(tokens, StreamId.LEFT, 0)
+        val rightAnchors = extractAnchors(tokens, StreamId.RIGHT, 1)
 
-        if (left.isEmpty() && right.isEmpty()) return emptyList()
+        if (leftAnchors.isEmpty() && rightAnchors.isEmpty()) return emptyList()
 
-        val predWordLen = left.count { it.isVisitationPoint } + right.count { it.isVisitationPoint } + 2
+        val predWordLen = leftAnchors.size + rightAnchors.size
         val heap = CandidateHeap(KineticaConstants.TOP_K)
 
-        // 4 Queue Buckets
-        val bucketSameFinger = PriorityQueue<PredPath>()
-        val bucketSwitchFinger = PriorityQueue<PredPath>()
-        val bucketApos = PriorityQueue<PredPath>()
-        val bucketSkip = PriorityQueue<PredPath>()
-        val BUCKET_CAPACITY = 5
+        val bucketSameFinger = ArrayList<PredPath>(16)
+        val bucketSwitchFinger = ArrayList<PredPath>(16)
+        val bucketApos = ArrayList<PredPath>(16)
+        val bucketSkip = ArrayList<PredPath>(16)
+        val BUCKET_CAPACITY = 15
 
         fun push(p: PredPath) {
             if (p.maybePrune(2.0f)) return
@@ -320,28 +336,49 @@ class NintypeDecoder(
                 2 -> bucketApos
                 else -> bucketSkip
             }
-            target.offer(p)
-            if (target.size > BUCKET_CAPACITY) {
-                // Keep highest-scoring candidates by popping lowest
-                val temp = ArrayList<PredPath>(target.size)
-                while (target.size > 1) {
-                    temp.add(target.poll())
-                }
-                target.poll() // Discard lowest
-                for (item in temp) target.offer(item)
+            target.add(p)
+            target.sortByDescending { it.heuristicScore }
+            while (target.size > BUCKET_CAPACITY) {
+                target.removeAt(target.size - 1)
             }
         }
 
-        // Seed search root for available fingers
-        if (left.isNotEmpty()) {
-            push(PredPath(trie.root, "", fingerId = 0, pointIndex = 0, otherPointIndex = 0, skipCount = 0, branchMode = 0, heuristicScore = 10.0f, minScoreSeen = 10.0f))
+        // Seed search root on fingers that start
+        if (leftAnchors.isNotEmpty()) {
+            push(
+                PredPath(
+                    node = trie.root,
+                    word = "",
+                    leftAnchorIdx = -1,
+                    rightAnchorIdx = -1,
+                    activeFinger = 0,
+                    lastTime = 0L,
+                    skipCount = 0,
+                    branchMode = 0,
+                    heuristicScore = 10.0f,
+                    minScoreSeen = 10.0f,
+                )
+            )
         }
-        if (right.isNotEmpty()) {
-            push(PredPath(trie.root, "", fingerId = 1, pointIndex = 0, otherPointIndex = 0, skipCount = 0, branchMode = 0, heuristicScore = 10.0f, minScoreSeen = 10.0f))
+        if (rightAnchors.isNotEmpty()) {
+            push(
+                PredPath(
+                    node = trie.root,
+                    word = "",
+                    leftAnchorIdx = -1,
+                    rightAnchorIdx = -1,
+                    activeFinger = 1,
+                    lastTime = 0L,
+                    skipCount = 0,
+                    branchMode = 0,
+                    heuristicScore = 10.0f,
+                    minScoreSeen = 10.0f,
+                )
+            )
         }
 
         var steps = 0
-        val maxSteps = 1500
+        val maxSteps = 2000
 
         while (steps++ < maxSteps) {
             val activeQueue = when {
@@ -352,39 +389,36 @@ class NintypeDecoder(
                 else -> break
             }
 
-            val current = activeQueue.poll() ?: continue
+            val current = activeQueue.removeAt(0)
 
-            // If terminal word, compute final score and offer to heap
+            // If terminal word, evaluate final score
             if (current.node != trie.root && trie.isWord(current.node)) {
                 val word = predictor.displayOf(current.node)
                 val freqByte = trie.frequency(current.node)
                 val freqWeight = KineticaConstants.FREQ_WEIGHT_FLOOR +
                     (1f - KineticaConstants.FREQ_WEIGHT_FLOOR) * freqByte / 255f
 
-                // Word length mismatch penalty (calculateNotLongEnoughMultpen)
                 val excessLen = max(0f, (predWordLen - word.length).toFloat())
                 val lenMult = lengthCurve.get(excessLen + 1.0f)
 
-                // Skip penalty (multForCharSkip)
                 val skipRatio = if (word.isNotEmpty()) current.skipCount.toFloat() / word.length else 0f
                 val skipMult = skipCurve.get(skipRatio)
 
-                // Bigram transition multiplier
                 val bm = if (prevWordId != -1) bigrams.multiplier(prevWordId, current.node) else 1.0f
                 val geoFit = min(1.0f, current.heuristicScore / 10.0f)
                 val bmApplied = KineticaConstants.appliedBoost(bm, geoFit)
 
                 val finalScore = freqWeight * geoFit * lenMult * skipMult * bmApplied
 
-                val isMerged = left.isNotEmpty() && right.isNotEmpty() &&
-                    (current.fingerId == 1 || current.otherPointIndex > 0)
+                val isMerged = leftAnchors.isNotEmpty() && rightAnchors.isNotEmpty() &&
+                    (current.leftAnchorIdx >= 0 && current.rightAnchorIdx >= 0)
                 val source = if (isMerged) WordCandidate.Source.MERGED else WordCandidate.Source.SWIPE
 
                 heap.offer(
                     WordCandidate(
                         word = word,
                         score = finalScore,
-                        dtwDistance = max(0.0f, 1.0f - (current.heuristicScore / 10.0f)),
+                        dtwDistance = max(0.0f, 1.0f - geoFit),
                         frequencyWeight = freqWeight,
                         bigramMultiplier = bmApplied,
                         wordId = current.node,
@@ -394,22 +428,23 @@ class NintypeDecoder(
                 )
             }
 
-            val stream = if (current.fingerId == 0) left else right
-            val otherStream = if (current.fingerId == 0) right else left
+            val curLeftIdx = current.leftAnchorIdx
+            val curRightIdx = current.rightAnchorIdx
 
-            // 1. Same-Finger Continuation (Bucket 0)
-            if (current.pointIndex < stream.size) {
-                // Find next sample or next visitation anchor
-                val maxLookahead = min(stream.size, current.pointIndex + 4)
-                for (nextIdx in current.pointIndex until maxLookahead) {
-                    val pt = stream[nextIdx]
-                    for (cand in pt.travKeys) {
+            // 1. Advance on Left Finger
+            if (curLeftIdx + 1 < leftAnchors.size) {
+                val maxLookahead = min(leftAnchors.size, curLeftIdx + 5)
+                for (a in (curLeftIdx + 1) until maxLookahead) {
+                    val anchor = leftAnchors[a]
+                    // Temporal ordering: must be after last matched letter minus overlap margin
+                    if (current.word.isNotEmpty() && anchor.t < current.lastTime - 80L) continue
+
+                    for (cand in anchor.cands) {
                         val childNode = trie.child(current.node, cand.code)
                         if (childNode != -1) {
-                            var modeMult = 1.00f
-                            // Double-letter check
+                            var modeMult = if (current.activeFinger == 0) 1.00f else 0.96f
                             if (current.word.isNotEmpty() && current.word.last() == cand.char) {
-                                modeMult *= getDoubleLetterPenalty(cand.char, pt.dwellRatio)
+                                modeMult *= getDoubleLetterPenalty(cand.char, anchor.pt.dwellRatio)
                             }
                             val nextScore = current.heuristicScore * cand.coverageScore * modeMult
                             if (nextScore >= 2.0f) {
@@ -417,38 +452,43 @@ class NintypeDecoder(
                                     current.copy(
                                         node = childNode,
                                         word = current.word + cand.char,
-                                        pointIndex = nextIdx + 1,
-                                        branchMode = 0,
+                                        leftAnchorIdx = a,
+                                        activeFinger = 0,
+                                        lastTime = anchor.t,
+                                        branchMode = if (current.activeFinger == 0) 0 else 1,
                                         heuristicScore = nextScore,
                                     )
                                 )
                             }
                         }
                     }
-                    if (pt.isVisitationPoint) break // Anchor reached
                 }
             }
 
-            // 2. Hand Switch Handoff (Bucket 1)
-            if (otherStream.isNotEmpty() && current.pointIndex in stream.indices) {
-                val softIdx = stream[current.pointIndex].otherFingerSoftIndex
-                val targetIdx = softIdx.roundToInt()
-                if (targetIdx in otherStream.indices && targetIdx >= current.otherPointIndex) {
-                    val otherPt = otherStream[targetIdx]
-                    for (cand in otherPt.travKeys) {
+            // 2. Advance on Right Finger
+            if (curRightIdx + 1 < rightAnchors.size) {
+                val maxLookahead = min(rightAnchors.size, curRightIdx + 5)
+                for (a in (curRightIdx + 1) until maxLookahead) {
+                    val anchor = rightAnchors[a]
+                    if (current.word.isNotEmpty() && anchor.t < current.lastTime - 80L) continue
+
+                    for (cand in anchor.cands) {
                         val childNode = trie.child(current.node, cand.code)
                         if (childNode != -1) {
-                            val switchMult = 0.96f
-                            val nextScore = current.heuristicScore * cand.coverageScore * switchMult
+                            var modeMult = if (current.activeFinger == 1) 1.00f else 0.96f
+                            if (current.word.isNotEmpty() && current.word.last() == cand.char) {
+                                modeMult *= getDoubleLetterPenalty(cand.char, anchor.pt.dwellRatio)
+                            }
+                            val nextScore = current.heuristicScore * cand.coverageScore * modeMult
                             if (nextScore >= 2.0f) {
                                 push(
                                     current.copy(
                                         node = childNode,
                                         word = current.word + cand.char,
-                                        fingerId = 1 - current.fingerId,
-                                        pointIndex = targetIdx + 1,
-                                        otherPointIndex = current.pointIndex,
-                                        branchMode = 1,
+                                        rightAnchorIdx = a,
+                                        activeFinger = 1,
+                                        lastTime = anchor.t,
+                                        branchMode = if (current.activeFinger == 1) 0 else 1,
                                         heuristicScore = nextScore,
                                     )
                                 )
@@ -462,7 +502,7 @@ class NintypeDecoder(
             if (current.skipCount < 1 && current.word.length >= 2) {
                 val firstChild = trie.firstChild(current.node)
                 val count = trie.childCount(current.node)
-                for (ci in 0 until min(count, 5)) {
+                for (ci in 0 until min(count, 4)) {
                     val childNode = firstChild + ci
                     val char = trie.alphabet.charOf(trie.letter(childNode))
                     val skipMult = 0.60f

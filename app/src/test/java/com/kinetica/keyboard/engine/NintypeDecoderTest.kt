@@ -111,4 +111,34 @@ class NintypeDecoderTest {
         val words = candidates.map { it.word }
         assertTrue("Expected 'cuando' in candidates, got $words", words.contains("cuando"))
     }
+
+    @Test
+    fun testWordPredictorEndToEndDualSimultaneousSwipe() {
+        val trie = testTrie()
+        val predictor = WordPredictor(trie, BigramTable.EMPTY, g)
+
+        val tokens = listOf(
+            TestData.swipe("wier", g, t0 = 0, durMs = 600, stream = StreamId.LEFT),
+            TestData.swipe("nt", g, t0 = 200, durMs = 300, stream = StreamId.RIGHT)
+        )
+
+        val candidates = predictor.decode(tokens, emptyList())
+        val words = candidates.map { it.word }
+        assertTrue("Expected 'winter' in end-to-end predictor decode, got $words", "winter" in words)
+    }
+
+    @Test
+    fun testWordPredictorEndToEndSingleSwipe() {
+        val trie = testTrie()
+        val predictor = WordPredictor(trie, BigramTable.EMPTY, g)
+
+        val tokens = listOf(
+            TestData.swipe("the", g, t0 = 0, durMs = 300, stream = StreamId.LEFT)
+        )
+
+        val candidates = predictor.decode(tokens, emptyList())
+        val words = candidates.map { it.word }
+        assertTrue("Expected 'the' in end-to-end predictor decode, got $words", "the" in words)
+        assertEquals("the", words.first())
+    }
 }
