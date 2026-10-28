@@ -215,7 +215,8 @@ object KineticaConstants {
 
     /**
      * Which search reads a swipe buffer: 1 the DFS passes, 2 the thumb-cursor beam
-     * ([ThumbBeam]) alone, 3 the passes then the beam. 3 takes labelled top-1 336 -> 416 and
+     * ([ThumbBeam]) alone, 3 the passes then the beam (with Nintype multi-finger integration),
+     * 4 Nintype multi-finger decoder alone. 3 takes labelled top-1 336 -> 416 and
      * hand-checked 46 -> 64 with no golden moved; 2 alone is six times faster but empties 91 leads.
      */
     const val SEARCH_ENGINE = 3
