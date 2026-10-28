@@ -141,4 +141,24 @@ class NintypeDecoderTest {
         assertTrue("Expected 'the' in end-to-end predictor decode, got $words", "the" in words)
         assertEquals("the", words.first())
     }
+
+    @Test
+    fun testWordPredictorToggleNintypeEnabled() {
+        val trie = testTrie()
+        val predictor = WordPredictor(trie, BigramTable.EMPTY, g, nintypeEnabled = true)
+
+        val dualSwipe = listOf(
+            TestData.swipe("wier", g, t0 = 0, durMs = 600, stream = StreamId.LEFT),
+            TestData.swipe("nt", g, t0 = 200, durMs = 300, stream = StreamId.RIGHT)
+        )
+
+        // When ON: Nintype decodes dual swipe into "winter"
+        val onCandidates = predictor.decode(dualSwipe, emptyList())
+        assertTrue("winter" in onCandidates.map { it.word })
+
+        // When OFF: Kinetica original engine only, does not produce dual swipe Nintype candidates
+        predictor.nintypeEnabled = false
+        val offCandidates = predictor.decode(dualSwipe, emptyList())
+        assertFalse("winter" in offCandidates.map { it.word })
+    }
 }

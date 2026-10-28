@@ -102,6 +102,8 @@
     <string name="pref_layout_mode_title">Modalità tastiera</string>
     <string name="pref_auto_capitalize_title">Maiuscola a inizio frase</string>
     <string name="pref_auto_capitalize_summary">Maiuscola dopo il punto. Se disattivato, la tastiera non mette mai maiuscole da sola</string>
+    <string name="pref_nintype_swipe_title">Algoritmo di scorrimento Nintype</string>
+    <string name="pref_nintype_swipe_summary">Usa l\'algoritmo multi-dito di Nintype per il riconoscimento dei gesti. Disattivato: usa l\'algoritmo originale di Kinetica</string>
     <string name="pref_autospace_title">Spazio automatico dopo uno swipe</string>
     <string name="pref_word_ends_on_space_title">La parola finisce solo con uno spazio</string>
     <string name="pref_word_ends_on_space_summary">Nessun timer: tocchi e swipe continuano la stessa parola, per quanto tempo ci metti, finché non arriva uno spazio, la punteggiatura o Invio. Per le parole lunghe scritte a pezzi</string>

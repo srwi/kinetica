@@ -212,6 +212,8 @@ data class KeyboardConfig(
     val peckMode: Boolean,
     /** The symbol pages' edited rows, page 1's three then page 2's; null keeps a built-in row. */
     val symbolRowLines: List<String?> = emptyList(),
+    /** Nintype multi-finger swipe decoding algorithm enabled; false for original Kinetica decoder alone. */
+    val nintypeSwipe: Boolean,
 ) {
     /** Page [page]'s three rows, for SymbolRows.apply. */
     fun symbolRows(page: Int): List<String?> =
@@ -475,6 +477,7 @@ data class KeyboardConfig(
             symbolRowLines = (1..2).flatMap { page ->
                 (1..SymbolRows.ROWS).map { row -> prefs.getString(Prefs.symbolRowKey(page, row), null) }
             },
+            nintypeSwipe = prefs.getBoolean(Prefs.NINTYPE_SWIPE, Prefs.DEFAULT_NINTYPE_SWIPE),
         )
         }
 

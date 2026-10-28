@@ -52,6 +52,7 @@ class KeyboardConfigTest {
     }
 
     @Test
+    @Test
     fun keyBordersAreOffUntilTurnedOnAndTheWidthIsClamped() {
         assertEquals(0, MapPrefs.config().keyBorderDp)
         assertEquals(0, MapPrefs.config(mapOf(Prefs.KEY_BORDER_WIDTH to 3)).keyBorderDp)
@@ -85,5 +86,12 @@ class KeyboardConfigTest {
     fun theSwipeLookIsTheTrailUntilChosen() {
         assertEquals(com.kinetica.keyboard.ui.SwipeLook.TRAIL, MapPrefs.config().swipeLook)
         assertEquals(com.kinetica.keyboard.ui.SwipeLook.KEYS, MapPrefs.config(mapOf(Prefs.SWIPE_LOOK to "keys")).swipeLook)
+    }
+
+    @Test
+    fun nintypeSwipeDefaultsToTrueAndCanBeToggled() {
+        org.junit.Assert.assertTrue(MapPrefs.config().nintypeSwipe)
+        org.junit.Assert.assertFalse(MapPrefs.config(mapOf(Prefs.NINTYPE_SWIPE to false)).nintypeSwipe)
+        org.junit.Assert.assertTrue(MapPrefs.config(mapOf(Prefs.NINTYPE_SWIPE to true)).nintypeSwipe)
     }
 }

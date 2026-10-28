@@ -44,6 +44,8 @@ class WordPredictor(
     val language: String = "",
     /** [LoadedDictionary.learned]: spellings in the trie that the bundled list does not hold. */
     private val learnedOnly: Set<String> = emptySet(),
+    /** Whether Nintype multi-finger swipe decoding algorithm is active. */
+    @Volatile var nintypeEnabled: Boolean = true,
 ) {
     /** The letters this predictor's trie and geometry are spelled in. */
     val alphabet: Alphabet get() = trie.alphabet
@@ -307,7 +309,7 @@ class WordPredictor(
         // would see without it. An all-tap buffer always takes the passes, which own tap
         // completion and transposition.
         val engine = KineticaConstants.SEARCH_ENGINE
-        if (engine == 4 && tokens.any { it is SwipeToken }) {
+        if (nintypeEnabled && engine == 4 && tokens.any { it is SwipeToken }) {
             val nintypeCandidates = NintypeDecoder(this, trie, bigrams, g, prevWordId, prevWord).decode(tokens)
             return finish(nintypeCandidates, startNs)
         }
@@ -402,7 +404,7 @@ class WordPredictor(
         }
 
         // Nintype Multi-Finger Swipe Decoding Engine Integration
-        val withNintype = if (tokens.any { it is SwipeToken }) {
+        val withNintype = if (nintypeEnabled && tokens.any { it is SwipeToken }) {
             val nintypeCands = NintypeDecoder(this, trie, bigrams, g, prevWordId, prevWord).decode(tokens)
             mergeNintype(withBeam, nintypeCands, tokens)
         } else {
