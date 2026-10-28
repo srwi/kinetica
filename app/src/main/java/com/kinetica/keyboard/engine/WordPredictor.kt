@@ -6,6 +6,7 @@ import com.kinetica.keyboard.engine.models.StreamId
 import com.kinetica.keyboard.engine.models.SwipeToken
 import com.kinetica.keyboard.engine.models.TapToken
 import com.kinetica.keyboard.engine.models.WordCandidate
+import kotlin.math.min
 
 /**
  * Turns a merged token sequence into scored word candidates.
