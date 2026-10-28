@@ -254,23 +254,12 @@ class NintypeDecoder(
             val prevPt = resampled[i - 1]
             val nextPt = resampled[i + 1]
 
-            // 1. Closest approach apex to a key
-            var isApex = false
-            for (cand in pt.travKeys) {
-                val dPrev = geometry.distToCenter(prevPt.x, prevPt.y, cand.code)
-                val dNext = geometry.distToCenter(nextPt.x, nextPt.y, cand.code)
-                if (cand.dist < 0.85f && cand.dist <= dPrev && cand.dist <= dNext) {
-                    isApex = true
-                    break
-                }
-            }
-
-            // 2. Curvature turn (angle deflection > 35 degrees)
+            // Curvature turn detection (angle deflection > 30 degrees)
             var isTurn = false
             if (i >= 1 && i + 1 < resampled.size) {
-                val p0 = prevPt
+                val p0 = if (i >= 2) resampled[i - 2] else prevPt
                 val p1 = pt
-                val p2 = nextPt
+                val p2 = if (i + 2 < resampled.size) resampled[i + 2] else nextPt
                 val v1x = p1.x - p0.x
                 val v1y = p1.y - p0.y
                 val v2x = p2.x - p1.x
@@ -280,13 +269,13 @@ class NintypeDecoder(
                 val len2 = sqrt(v2x * v2x + v2y * v2y)
                 if (len1 > 0.02f && len2 > 0.02f) {
                     val cosTheta = dot / (len1 * len2)
-                    if (cosTheta < 0.82f) {
+                    if (cosTheta < 0.85f) {
                         isTurn = true
                     }
                 }
             }
 
-            if (isApex || isTurn || pt.dwellRatio > 0.2f) {
+            if (isTurn || pt.dwellRatio > 0.2f) {
                 addAnchor(pt)
             }
         }
@@ -433,8 +422,7 @@ class NintypeDecoder(
 
             // 1. Advance on Left Finger
             if (curLeftIdx + 1 < leftAnchors.size) {
-                val maxLookahead = min(leftAnchors.size, curLeftIdx + 5)
-                for (a in (curLeftIdx + 1) until maxLookahead) {
+                for (a in (curLeftIdx + 1) until leftAnchors.size) {
                     val anchor = leftAnchors[a]
                     // Temporal ordering: must be after last matched letter minus overlap margin
                     if (current.word.isNotEmpty() && anchor.t < current.lastTime - 80L) continue
@@ -467,8 +455,7 @@ class NintypeDecoder(
 
             // 2. Advance on Right Finger
             if (curRightIdx + 1 < rightAnchors.size) {
-                val maxLookahead = min(rightAnchors.size, curRightIdx + 5)
-                for (a in (curRightIdx + 1) until maxLookahead) {
+                for (a in (curRightIdx + 1) until rightAnchors.size) {
                     val anchor = rightAnchors[a]
                     if (current.word.isNotEmpty() && anchor.t < current.lastTime - 80L) continue
 
