@@ -215,6 +215,8 @@ object Prefs {
     const val CHORD_DEFAULTS_SEEDED = "pref_chord_defaults_seeded"
     const val RETYPE_AVOIDS_REJECTED = "pref_retype_avoids_rejected"
     const val AUTOCORRECT_LEVEL = "pref_autocorrect_level"
+    /** Use Nintype multi-finger swipe decoding algorithm instead of original Kinetica decoder alone. */
+    const val NINTYPE_SWIPE = "pref_nintype_swipe"
     const val REINFORCE_INCREMENT = "pref_reinforce_increment"
     const val EMOJI_KEY = "pref_emoji_key"
     /**
@@ -582,6 +584,7 @@ object Prefs {
     const val DEFAULT_SPACE_CHORD_ARM_MS = 50
     const val DEFAULT_RETYPE_AVOIDS_REJECTED = false
     const val DEFAULT_AUTOCORRECT_LEVEL = "normal"
+    const val DEFAULT_NINTYPE_SWIPE = true
     const val DEFAULT_REINFORCE_INCREMENT = "medium"
     const val DEFAULT_EMOJI_KEY = false
     const val DEFAULT_NUMBER_PRIORITY = true

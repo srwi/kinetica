@@ -199,6 +199,7 @@ internal class ResidentDictionaries(private val context: Context, private val ma
                         personalPairs = pairs
                         val p = WordPredictor(
                             dict.trie, bigrams, geometry(), dict.forms, counts, pairs, lang,
+                            nintypeEnabled = config().nintypeSwipe,
                         )
                         predictor = p
                         val altCounts = ConcurrentHashMap<String, Int>(altRows.size * 2)
@@ -212,6 +213,7 @@ internal class ResidentDictionaries(private val context: Context, private val ma
                             WordPredictor(
                                 d.trie, b, geometry(), d.forms, altCounts, altPairs,
                                 language = detectLang ?: "",
+                                nintypeEnabled = config().nintypeSwipe,
                             )
                         }
                         val xCounts = ConcurrentHashMap<String, Int>(extraRows.size * 2)
@@ -221,7 +223,11 @@ internal class ResidentDictionaries(private val context: Context, private val ma
                         extraPairs = xPairs
                         extraLanguage = if (extra != null) extraLang else null
                         extraPredictor = extra?.let { (d, b) ->
-                            WordPredictor(d.trie, b, geometry(), d.forms, xCounts, xPairs, language = extraLang ?: "")
+                            WordPredictor(
+                                d.trie, b, geometry(), d.forms, xCounts, xPairs,
+                                language = extraLang ?: "",
+                                nintypeEnabled = config().nintypeSwipe,
+                            )
                         }
                         onReady(p)
                         Log.i(
@@ -255,6 +261,12 @@ internal class ResidentDictionaries(private val context: Context, private val ma
         predictor?.geometry = geometry
         secondaryPredictor?.geometry = geometry
         extraPredictor?.geometry = geometry
+    }
+
+    fun updateNintypeEnabled(enabled: Boolean) {
+        predictor?.nintypeEnabled = enabled
+        secondaryPredictor?.nintypeEnabled = enabled
+        extraPredictor?.nintypeEnabled = enabled
     }
 
     /** The resident languages in load order: [active], second, third. */

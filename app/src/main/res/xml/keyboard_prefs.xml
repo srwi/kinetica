@@ -77,6 +77,12 @@
             android:summary="@string/pref_auto_capitalize_summary"
             android:defaultValue="true" />
         <SwitchPreferenceCompat
+            android:key="pref_nintype_swipe"
+            android:title="@string/pref_nintype_swipe_title"
+            app:singleLineTitle="false"
+            android:summary="@string/pref_nintype_swipe_summary"
+            android:defaultValue="true" />
+        <SwitchPreferenceCompat
             android:key="pref_next_word"
             android:title="@string/pref_next_word_title"
             app:singleLineTitle="false"

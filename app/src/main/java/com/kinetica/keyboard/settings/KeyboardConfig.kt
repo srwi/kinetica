@@ -189,6 +189,8 @@ data class KeyboardConfig(
     val britishSpelling: Boolean,
     /** Peck-type mode: swipes/predictions off, taps commit literally. */
     val peckMode: Boolean,
+    /** Nintype multi-finger swipe decoding algorithm enabled; false for original Kinetica decoder alone. */
+    val nintypeSwipe: Boolean,
 ) {
     companion object {
         fun from(prefs: SharedPreferences): KeyboardConfig {
@@ -420,6 +422,7 @@ data class KeyboardConfig(
                 Prefs.SYNC_SYSTEM_LANGUAGE, Prefs.DEFAULT_SYNC_SYSTEM_LANGUAGE,
             ),
             peckMode = prefs.getBoolean(Prefs.PECK_MODE, Prefs.DEFAULT_PECK_MODE),
+            nintypeSwipe = prefs.getBoolean(Prefs.NINTYPE_SWIPE, Prefs.DEFAULT_NINTYPE_SWIPE),
         )
         }
 

@@ -124,6 +124,8 @@
     <string name="pref_layout_mode_title">Layout mode</string>
     <string name="pref_auto_capitalize_title">Capitalize sentences</string>
     <string name="pref_auto_capitalize_summary">A capital after a full stop. Off: the keyboard never capitalizes for you</string>
+    <string name="pref_nintype_swipe_title">Nintype swipe algorithm</string>
+    <string name="pref_nintype_swipe_summary">Use Nintype multi-finger swipe decoding algorithm with turn detection and dual-thumb coordination. Off: uses original Kinetica swipe decoder</string>
     <string name="pref_autospace_title">Autospace after swipe</string>
     <string name="pref_word_ends_on_space_title">Word ends only when you type a space</string>
     <string name="pref_word_ends_on_space_summary">No timer: taps and swipes add to the same word however long you take, until a space, punctuation or enter. For long words written in pieces</string>

@@ -50,4 +50,11 @@ class KeyboardConfigTest {
         assertEquals(20f, MapPrefs.config(mapOf(Prefs.BACKSPACE_STEP_DP to 3)).backspaceStepDp, 0f)
         assertEquals(80f, MapPrefs.config(mapOf(Prefs.BACKSPACE_STEP_DP to 500)).backspaceStepDp, 0f)
     }
+
+    @Test
+    fun nintypeSwipeDefaultsToTrueAndCanBeToggled() {
+        org.junit.Assert.assertTrue(MapPrefs.config().nintypeSwipe)
+        org.junit.Assert.assertFalse(MapPrefs.config(mapOf(Prefs.NINTYPE_SWIPE to false)).nintypeSwipe)
+        org.junit.Assert.assertTrue(MapPrefs.config(mapOf(Prefs.NINTYPE_SWIPE to true)).nintypeSwipe)
+    }
 }

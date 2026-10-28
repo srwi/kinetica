@@ -201,6 +201,9 @@ class KineticaIME : InputMethodService(), GestureEngine.Listener, WordComposer.C
                 // half-tracked tentative; settle it as plain text first.
                 commit.abandonWord()
             }
+            if (config.nintypeSwipe != previous.nintypeSwipe) {
+                residents.updateNintypeEnabled(config.nintypeSwipe)
+            }
             if (config.language != previous.language) {
                 // Before the layout is built, so the board comes out of the arrangement
                 // the language asked for, not the one it replaces.
