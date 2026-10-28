@@ -146,19 +146,25 @@ class NintypeDecoderTest {
     fun testWordPredictorToggleNintypeEnabled() {
         val trie = testTrie()
         val predictor = WordPredictor(trie, BigramTable.EMPTY, g, nintypeEnabled = true)
+        assertTrue(predictor.nintypeEnabled)
 
+        // Non-chronological dual swipe: Left finger swipes "wn" (0..200ms), Right finger swipes "iter" (250..750ms).
+        // Strict chronological ordering is "w-n-i-t-e-r", which fails Kinetica's native DFS.
         val dualSwipe = listOf(
-            TestData.swipe("wier", g, t0 = 0, durMs = 600, stream = StreamId.LEFT),
-            TestData.swipe("nt", g, t0 = 200, durMs = 300, stream = StreamId.RIGHT)
+            TestData.swipe("wn", g, t0 = 0, durMs = 200, stream = StreamId.LEFT),
+            TestData.swipe("iter", g, t0 = 250, durMs = 500, stream = StreamId.RIGHT)
         )
 
-        // When ON: Nintype decodes dual swipe into "winter"
+        // When ON: Nintype multi-finger anchors decode "winter"
         val onCandidates = predictor.decode(dualSwipe, emptyList())
-        assertTrue("winter" in onCandidates.map { it.word })
+        val onWords = onCandidates.map { it.word }
+        assertTrue("Expected 'winter' in onCandidates, got $onWords", "winter" in onWords)
 
-        // When OFF: Kinetica original engine only, does not produce dual swipe Nintype candidates
+        // When OFF: Kinetica original engine only, cannot decode non-chronological "wn"+"iter" into "winter"
         predictor.nintypeEnabled = false
+        assertFalse(predictor.nintypeEnabled)
         val offCandidates = predictor.decode(dualSwipe, emptyList())
-        assertFalse("winter" in offCandidates.map { it.word })
+        val offWords = offCandidates.map { it.word }
+        assertFalse("Did not expect 'winter' in offWords, got $offWords", "winter" in offWords)
     }
 }
