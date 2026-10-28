@@ -24,3 +24,10 @@ jobs:
 
       # The project's exact green gate: build, JVM golden suite, lint.
       - run: ./gradlew assembleDebug test lint
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kinetica-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
