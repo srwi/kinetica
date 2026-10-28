@@ -145,4 +145,32 @@ class RecentWordsTest {
         assertFalse(userDictDemoted(300, 300))
         assertFalse("never merged, nothing stale", userDictDemoted(1, 0))
     }
+
+    @Test
+    fun alignRecentCanFindUpToEightWordsAcrossTheEditor() {
+        val words = listOf("one", "two", "three", "four", "five", "six", "seven", "eight")
+        val text = "one two three four five six seven eight "
+        val aligned = alignRecent(text, 0, words)
+        assertEquals(8, aligned.size)
+        // Newest ("eight") is at distance (text.length - text.indexOf("eight"))
+        assertEquals(text.length - text.indexOf("eight"), aligned[0])
+        assertEquals(text.length - text.indexOf("one"), aligned[7])
+    }
+
+    @Test
+    fun jumpTargetReturnsToTheSavedCursorResumePosition() {
+        // When cursor was at the end of text (0 characters after cursor)
+        assertEquals(40, recentJumpTarget(total = 40, savedAfter = 0))
+        // When user types over a word with a longer text (total grew from 40 to 45)
+        assertEquals(45, recentJumpTarget(total = 45, savedAfter = 0))
+        // When cursor was before a 15-character suffix (e.g. " That's all.")
+        // Total text was 50, cursor was at 35 (savedAfter = 15)
+        assertEquals(35, recentJumpTarget(total = 50, savedAfter = 15))
+        // If word replacement lengthened total to 55, target shifts to 40 (55 - 15)
+        assertEquals(40, recentJumpTarget(total = 55, savedAfter = 15))
+        // If no saved position (savedAfter = -1), jumps to the end of text
+        assertEquals(55, recentJumpTarget(total = 55, savedAfter = -1))
+        // If text was heavily deleted, clamps to 0
+        assertEquals(0, recentJumpTarget(total = 5, savedAfter = 15))
+    }
 }
