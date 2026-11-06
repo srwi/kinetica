@@ -52,7 +52,6 @@ class KeyboardConfigTest {
     }
 
     @Test
-    @Test
     fun keyBordersAreOffUntilTurnedOnAndTheWidthIsClamped() {
         assertEquals(0, MapPrefs.config().keyBorderDp)
         assertEquals(0, MapPrefs.config(mapOf(Prefs.KEY_BORDER_WIDTH to 3)).keyBorderDp)
