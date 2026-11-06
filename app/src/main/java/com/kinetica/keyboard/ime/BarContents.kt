@@ -48,12 +48,14 @@ internal class BarContents(private val ime: KineticaIME) {
     /**
      * Puts the recent words the editor still holds on the bar, oldest first, or takes them
      * down. The correction strip already shows the newest commit, so that one is left out
-     * while it is up. Fills the whole suggestion bar with recent words when enabled.
+     * while it is up. Fills the whole suggestion bar with recent words when enabled, with
+     * the rightmost column showing the word currently being typed.
      */
     fun pushRecent() {
         val bar = ime.suggestionBar ?: return
         val entries = recentWords.entries()
-        if (!ime.config.recentWords || ime.editorState.privateMode || entries.isEmpty()) {
+        val inProgress = ime.wordState.tentativeLength > 0 || ime.composer?.hasPendingWord == true || ime.wordState.lastCandidates.isNotEmpty()
+        if (!ime.config.recentWords || ime.editorState.privateMode || (entries.isEmpty() && !inProgress)) {
             bar.recent = emptyList()
             bar.selectedRecentBack = -1
             return
@@ -61,9 +63,9 @@ internal class BarContents(private val ime: KineticaIME) {
         val selText = ime.ich.selectedText()?.toString() ?: ""
         val before = (ime.ich.textBeforeCursor(RECENT_TAIL_CHARS) ?: "").toString() + selText
         val aligned = alignRecent(before, ime.wordState.tentativeLength, entries.map { it.word })
-        val skip = if (ime.lastCommit.stripWord != null) 1 else 0
+        val skip = if (ime.lastCommit.stripWord != null && !inProgress) 1 else 0
         val maxCols = RECENT_BAR_COLUMNS
-        val cols = ArrayList<SuggestionBarView.RecentColumn>(maxCols)
+        val cols = ArrayList<SuggestionBarView.RecentColumn>(maxCols + 1)
         for (back in skip until minOf(aligned.size, skip + maxCols)) {
             val e = entries[entries.size - 1 - back]
             val shown = before.subSequence(before.length - aligned[back], before.length - aligned[back] + e.word.length)
@@ -79,8 +81,49 @@ internal class BarContents(private val ime: KineticaIME) {
                     listOf(alts.getOrNull(0), e.word, alts.getOrNull(1)).map { w ->
                         if (w == null) 0 else ime.countsFor(e.languages[w.lowercase()] ?: ime.languageOf(w))[w.lowercase()] ?: 0
                     },
+                    inProgress = false,
                 ),
             )
+        }
+        if (inProgress) {
+            val typed = when {
+                ime.composer?.hasSwipeToken() == true -> ""
+                ime.wordState.tentativeLength > 0 &&
+                    AccentFolder.fold(ime.wordState.tentativeWord.lowercase()) == ime.wordState.lastLiteral -> ime.wordState.tentativeWord
+                else -> ime.displayWord(ime.wordState.lastLiteral)
+            }
+            val decoded = ime.wordState.lastCandidates.map { ime.displayWord(it.word) }
+            val liveWord = when {
+                decoded.isNotEmpty() -> decoded[0]
+                typed.isNotEmpty() -> typed
+                ime.wordState.tentativeWord.isNotEmpty() -> ime.wordState.tentativeWord
+                else -> ""
+            }
+            if (liveWord.isNotEmpty()) {
+                val alt0 = when {
+                    decoded.size > 1 -> decoded[1]
+                    typed.isNotEmpty() && typed != liveWord -> typed
+                    else -> null
+                }
+                val alt1 = when {
+                    decoded.size > 2 -> decoded[2]
+                    decoded.size > 1 && typed.isNotEmpty() && typed != liveWord && typed != alt0 -> typed
+                    else -> null
+                }
+                val counts = listOf(alt0, liveWord, alt1).map { w ->
+                    if (w == null) 0 else ime.countsFor(ime.languageOf(w))[w.lowercase()] ?: 0
+                }
+                cols.add(
+                    SuggestionBarView.RecentColumn(
+                        word = liveWord,
+                        above = alt0,
+                        below = alt1,
+                        back = 0,
+                        counts = counts,
+                        inProgress = true,
+                    ),
+                )
+            }
         }
         if (cols.isEmpty() && bar.recent.isNotEmpty() && selectedRecentBack >= 0) {
             return

@@ -573,6 +573,7 @@ class KineticaIME : InputMethodService(), GestureEngine.Listener, WordComposer.C
                 commitTracked(ch.toString())
                 wordState.tentativeLength += 1
                 wordState.tentativeWord += ch
+                if (config.recentWords) barContents.pushRecent()
                 if (shift.state == ShiftState.State.SHIFT) {
                     shift.onLetterCommitted()
                     keyboardView?.setShiftUppercase(shift.isShifted)

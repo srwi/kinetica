@@ -84,6 +84,7 @@ class SuggestionBarView @JvmOverloads constructor(
     /**
      * One recent word on the bar and the two candidates it beat, drawn above and below it.
      * [back] is how many commits before the newest it is.
+     * [inProgress] is true if this column represents the live word currently being typed.
      */
     data class RecentColumn(
         val word: String,
@@ -92,6 +93,7 @@ class SuggestionBarView @JvmOverloads constructor(
         val back: Int,
         /** The personal counts behind [above], [word] and [below], for their badges and the slide. */
         val counts: List<Int> = listOf(0, 0, 0),
+        val inProgress: Boolean = false,
     )
 
     /**
@@ -685,13 +687,56 @@ class SuggestionBarView @JvmOverloads constructor(
         }
     }
 
+    data class ColumnBounds(val left: Float, val right: Float)
+
+    private fun measureRecentColumnWidth(col: RecentColumn, orn: Float): Float {
+        val h = if (height > 0) height.toFloat() else BarMetrics.REFERENCE_DP * density * tallFactor.coerceAtLeast(1f)
+        val rowH = h / RECENT_ROWS
+        val size = BarMetrics.textSize(rowH, recentTextScale) * BarMetrics.RECENT_TEXT_SCALE
+        textPaint.textSize = size
+        primaryPaint.textSize = size
+        val wWord = primaryPaint.measureText(col.word)
+        val wAbove = col.above?.let { textPaint.measureText(it) } ?: 0f
+        val wBelow = col.below?.let { textPaint.measureText(it) } ?: 0f
+        val textMax = maxOf(wWord, wAbove, wBelow)
+        val hasBadge = col.counts.any { it > 0 }
+        val badgeW = if (hasBadge) 2f * (BADGE_GAP_DP + BADGE_REACH_DP) * density * orn else 0f
+        val pad = (TEXT_INSET_DP * 2f) * density * orn
+        val minW = 44f * density
+        return maxOf(minW, textMax + badgeW + pad)
+    }
+
+    private fun computeRecentBounds(): List<ColumnBounds> {
+        if (recent.isEmpty()) return emptyList()
+        val orn = BarMetrics.scale(rowHeight(), density)
+        if (!recentWordsEnabled) {
+            val colW = width * RECENT_COLUMN_FRACTION
+            return recent.indices.map { c ->
+                val left = c * colW
+                ColumnBounds(left, left + colW)
+            }
+        }
+        val rightBoundary = (width - rightButtonsWidth()).coerceAtLeast(0f)
+        val result = arrayOfNulls<ColumnBounds>(recent.size)
+        var curRight = rightBoundary
+        // Layout from right to left: last element in recent is the rightmost column
+        for (i in recent.indices.reversed()) {
+            val col = recent[i]
+            val colW = measureRecentColumnWidth(col, orn)
+            val left = curRight - colW
+            result[i] = ColumnBounds(left, curRight)
+            curRight = left
+        }
+        return result.filterNotNull()
+    }
+
     /**
      * The recent words, each in its column with the candidate it beat above and the next one
      * below. The word itself sits on the chip, as the committed word does in correction mode.
      */
     private fun drawRecent(canvas: Canvas, h: Float) {
         if (recent.isEmpty()) return
-        val colW = recentColumnWidth()
+        val bounds = computeRecentBounds()
         val rowH = h / RECENT_ROWS
         val size = BarMetrics.textSize(rowH, recentTextScale) * BarMetrics.RECENT_TEXT_SCALE
         textPaint.textSize = size
@@ -699,17 +744,26 @@ class SuggestionBarView @JvmOverloads constructor(
         val orn = BarMetrics.scale(rowHeight(), density)
         val pad = 3f * density * orn
         val corner = 6f * density * orn
+
+        canvas.save()
+        if (recentWordsEnabled) {
+            canvas.clipRect(0f, 0f, (width - rightButtonsWidth()).coerceAtLeast(0f), h)
+        }
         for ((c, col) in recent.withIndex()) {
-            val left = c * colW
+            val b = bounds.getOrNull(c) ?: continue
+            val left = b.left
+            val right = b.right
+            val colW = right - left
+            if (right <= 0f) continue
             val cx = left + colW / 2f
             val cells = arrayOf(col.above, col.word, col.below)
-            val isSelected = selectedRecentBack >= 0 && col.back == selectedRecentBack
+            val isSelected = selectedRecentBack >= 0 && col.back == selectedRecentBack && !col.inProgress
             for (r in 0 until RECENT_ROWS) {
                 val word = cells[r] ?: continue
                 val top = r * rowH
                 val paint = if (r == 1) primaryPaint else textPaint
                 if (r == 1) {
-                    zoneRect.set(left + pad, top + pad, left + colW - pad, top + rowH - pad)
+                    zoneRect.set(left + pad, top + pad, right - pad, top + rowH - pad)
                     canvas.drawRoundRect(zoneRect, corner, corner, chipPaint)
                     if (isSelected) {
                         val style = besidePaint.style
@@ -722,7 +776,7 @@ class SuggestionBarView @JvmOverloads constructor(
                     }
                 }
                 val y = top + rowH / 2f - (paint.descent() + paint.ascent()) / 2f
-                val shown = fit(word, paint, colW)
+                val shown = if (recentWordsEnabled) word else fit(word, paint, colW)
                 canvas.drawText(shown, cx, y, paint)
                 // The badge previews the slide while this cell is held.
                 val cell = c * RECENT_ROWS + r
@@ -741,8 +795,11 @@ class SuggestionBarView @JvmOverloads constructor(
                     }
                 }
             }
-            canvas.drawRect(left + colW - 1f, h * 0.1f, left + colW + 1f, h * 0.9f, dividerPaint)
+            if (!recentWordsEnabled || c < recent.size - 1) {
+                canvas.drawRect(right - 1f, h * 0.1f, right + 1f, h * 0.9f, dividerPaint)
+            }
         }
+        canvas.restore()
     }
 
     /**
@@ -919,10 +976,14 @@ class SuggestionBarView @JvmOverloads constructor(
                         val col = recent.getOrNull(recentDownCell / RECENT_ROWS)
                         val word = if (BarAdjust.swapTakesAbove(dy, recentSwipeReversed)) col?.above else col?.below
                         if (col != null && word != null) {
-                            listener?.onRecentPicked(col.back, word)
+                            if (col.inProgress) {
+                                listener?.onSuggestionPicked(word)
+                            } else {
+                                listener?.onRecentPicked(col.back, word)
+                            }
                             performClick()
                         }
-                    } else if (zone == ZONE_RECENT && cell == recentDownCell) {
+                    } else if (zone == ZONE_RECENT && cell == recentDownCell && cell >= 0) {
                         val col = recent.getOrNull(cell / RECENT_ROWS)
                         if (col != null) {
                             val word = when (cell % RECENT_ROWS) {
@@ -931,10 +992,18 @@ class SuggestionBarView @JvmOverloads constructor(
                                 else -> null
                             }
                             if (word != null) {
-                                listener?.onRecentPicked(col.back, word)
+                                if (col.inProgress) {
+                                    listener?.onSuggestionPicked(word)
+                                } else {
+                                    listener?.onRecentPicked(col.back, word)
+                                }
                                 performClick()
                             } else {
-                                listener?.onRecentSelected(col.back, col.word)
+                                if (col.inProgress) {
+                                    listener?.onSuggestionPicked(col.word)
+                                } else {
+                                    listener?.onRecentSelected(col.back, col.word)
+                                }
                                 performClick()
                             }
                         }
@@ -1035,26 +1104,39 @@ class SuggestionBarView @JvmOverloads constructor(
         (width - rightButtonsWidth() - wordsLeft()).coerceAtLeast(0f)
 
     /** One row's height: the bar's own unless [tallFactor] made room for recent words. */
-    private fun rowHeight(): Float = height / tallFactor.coerceAtLeast(1f)
-
-    /** Bar width each recent-word column takes: fills the whole bar up to the right-side buttons. */
-    private fun recentColumnWidth(): Float {
-        if (recent.isEmpty()) return 0f
-        val available = (width - rightButtonsWidth()).coerceAtLeast(0f)
-        return available / recent.size
-    }
+    private fun rowHeight(): Float =
+        if (height > 0) height / tallFactor.coerceAtLeast(1f) else BarMetrics.REFERENCE_DP * density
 
     /** Where the live words start: right of the recent-word columns. */
     private fun wordsLeft(): Float =
-        if (recent.isNotEmpty()) (width - rightButtonsWidth()).coerceAtLeast(0f) else 0f
+        if (recent.isNotEmpty()) {
+            if (recentWordsEnabled) {
+                (width - rightButtonsWidth()).coerceAtLeast(0f)
+            } else {
+                recent.size * (width * RECENT_COLUMN_FRACTION)
+            }
+        } else {
+            0f
+        }
 
     /** Column times [RECENT_ROWS] plus row, for a touch inside the recent-word columns. */
     private fun recentCellAt(x: Float, y: Float): Int {
-        val colW = recentColumnWidth()
-        if (colW <= 0f) return -1
-        val col = (x / colW).toInt().coerceIn(0, (recent.size - 1).coerceAtLeast(0))
+        if (recent.isEmpty()) return -1
         val row = (y / (height.toFloat() / RECENT_ROWS)).toInt().coerceIn(0, RECENT_ROWS - 1)
-        return col * RECENT_ROWS + row
+        if (!recentWordsEnabled) {
+            val colW = width * RECENT_COLUMN_FRACTION
+            if (colW <= 0f) return -1
+            val col = (x / colW).toInt().coerceIn(0, (recent.size - 1).coerceAtLeast(0))
+            return col * RECENT_ROWS + row
+        }
+        val bounds = computeRecentBounds()
+        for (i in recent.indices) {
+            val b = bounds.getOrNull(i) ?: continue
+            if (x in b.left..b.right) {
+                return i * RECENT_ROWS + row
+            }
+        }
+        return -1
     }
 
     private fun zoneAt(xRaw: Float): Int {
@@ -1064,7 +1146,11 @@ class SuggestionBarView @JvmOverloads constructor(
         // visible and pageCount ignore them.
         if (retypeButton && xRaw >= width - retypeWidth()) return ZONE_RETYPE
         if (recentWordsEnabled && xRaw >= width - rightButtonsWidth()) return ZONE_JUMP_BACK
-        if (recent.isNotEmpty() && xRaw < wordsLeft()) return ZONE_RECENT
+        if (recentWordsEnabled) {
+            if (recent.isNotEmpty() && xRaw < width - rightButtonsWidth()) return ZONE_RECENT
+        } else {
+            if (recent.isNotEmpty() && xRaw < wordsLeft()) return ZONE_RECENT
+        }
         val x = xRaw - wordsLeft()
         val acts = visibleActions()
         if (acts.isNotEmpty()) {
