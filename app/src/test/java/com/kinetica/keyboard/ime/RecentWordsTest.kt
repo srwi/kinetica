@@ -50,7 +50,10 @@ class RecentWordsTest {
     @Test
     fun caseIsMatchedNotCompared() {
         assertEquals(listOf(4), alignRecent("The ", 0, listOf("the")))
-        assertEquals("There", matchCase("The", "there"))
+        assertEquals("There", matchCase("The", "there", isSentenceStart = true))
+        assertEquals("there", matchCase("The", "there", isSentenceStart = false))
+        assertEquals("hast", matchCase("Haus", "hast", isSentenceStart = false))
+        assertEquals("Boot", matchCase("Haus", "Boot", isSentenceStart = false))
         assertEquals("THERE", matchCase("THE", "there"))
         assertEquals("there", matchCase("the", "there"))
         assertEquals("I", matchCase("I", "i"))

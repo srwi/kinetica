@@ -163,9 +163,10 @@ internal fun recentPairMoves(prev: String?, old: String, new: String, next: Stri
 }
 
 /** [word] cased like [written]: all capitals, a leading capital, or as it is. */
-internal fun matchCase(written: CharSequence, word: String): String = when {
+internal fun matchCase(written: CharSequence, word: String, isSentenceStart: Boolean = false): String = when {
     written.length > 1 && written.all { !it.isLetter() || it.isUpperCase() } -> word.uppercase()
-    written.isNotEmpty() && written[0].isUpperCase() -> word.replaceFirstChar { it.uppercaseChar() }
+    word.isNotEmpty() && word[0].isUpperCase() -> word
+    isSentenceStart -> word.replaceFirstChar { it.uppercaseChar() }
     else -> word
 }
 

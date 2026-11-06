@@ -68,20 +68,27 @@ internal class BarContents(private val ime: KineticaIME) {
         val cols = ArrayList<SuggestionBarView.RecentColumn>(maxCols + 1)
         for (back in skip until minOf(aligned.size, skip + maxCols)) {
             val e = entries[entries.size - 1 - back]
-            val shown = before.subSequence(before.length - aligned[back], before.length - aligned[back] + e.word.length)
+            val wordStart = before.length - aligned[back]
+            val wordEnd = wordStart + e.word.length
+            val isSentenceStart = startsNewSentence(before.subSequence(0, wordStart))
+            val shown = before.subSequence(wordStart, wordEnd)
+            val nextLimit = if (back > 0) before.length - aligned[back - 1] else before.length - ime.wordState.tentativeLength
+            val between = if (nextLimit > wordEnd && nextLimit <= before.length) before.subSequence(wordEnd, nextLimit) else ""
+            val punct = between.filter { !it.isWhitespace() && !isRecentWordChar(it) }.take(3).toString()
             val alts = notBlocked(sameLanguage(e.alternatives, e.languages, e.word, ime.config.language), ime.residents.blockedSpellings)
             cols.add(
                 0,
                 SuggestionBarView.RecentColumn(
                     shown.toString(),
-                    alts.getOrNull(0)?.let { recentAlternate(shown, it, e.languages) },
-                    alts.getOrNull(1)?.let { recentAlternate(shown, it, e.languages) },
+                    alts.getOrNull(0)?.let { recentAlternate(shown, it, e.languages, isSentenceStart) },
+                    alts.getOrNull(1)?.let { recentAlternate(shown, it, e.languages, isSentenceStart) },
                     back,
                     // The counts behind the badges and the slide, each in its own language.
                     listOf(alts.getOrNull(0), e.word, alts.getOrNull(1)).map { w ->
                         if (w == null) 0 else ime.countsFor(e.languages[w.lowercase()] ?: ime.languageOf(w))[w.lowercase()] ?: 0
                     },
                     inProgress = false,
+                    punct = punct,
                 ),
             )
         }
@@ -133,8 +140,8 @@ internal class BarContents(private val ime: KineticaIME) {
     }
 
     /** A recent word's alternative as its column shows it: cased like the word, then the pronoun rule. */
-    private fun recentAlternate(written: CharSequence, alt: String, languages: Map<String, String>): String =
-        AutoCapitalization.forWord(matchCase(written, alt), ime.config.language, languages[alt.lowercase()] ?: ime.config.language)
+    private fun recentAlternate(written: CharSequence, alt: String, languages: Map<String, String>, isSentenceStart: Boolean = false): String =
+        AutoCapitalization.forWord(matchCase(written, alt, isSentenceStart), ime.config.language, languages[alt.lowercase()] ?: ime.config.language)
 
     /**
      * Swaps a recent word for one it beat, where the editor still holds it: the text from the
@@ -157,7 +164,8 @@ internal class BarContents(private val ime: KineticaIME) {
         val entry = entries[entries.size - 1 - back]
         val span = aligned[back]
         val start = before.length - span
-        val replacement = matchCase(before.subSequence(start, start + entry.word.length), word)
+        val isSentenceStart = startsNewSentence(before.subSequence(0, start))
+        val replacement = matchCase(before.subSequence(start, start + entry.word.length), word, isSentenceStart)
         val rewritten = recentRewrite(before, span, entry.word.length, replacement)
         ime.commitHistory.replaced(ime.cursorExpected() - span, entry.word, replacement)
         ime.forgetCommitMarks()

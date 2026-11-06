@@ -94,6 +94,7 @@ class SuggestionBarView @JvmOverloads constructor(
         /** The personal counts behind [above], [word] and [below], for their badges and the slide. */
         val counts: List<Int> = listOf(0, 0, 0),
         val inProgress: Boolean = false,
+        val punct: String = "",
     )
 
     /**
@@ -695,7 +696,7 @@ class SuggestionBarView @JvmOverloads constructor(
         val size = BarMetrics.textSize(rowH, recentTextScale) * BarMetrics.RECENT_TEXT_SCALE
         textPaint.textSize = size
         primaryPaint.textSize = size
-        val wWord = primaryPaint.measureText(col.word)
+        val wWord = primaryPaint.measureText(col.word + col.punct)
         val wAbove = col.above?.let { textPaint.measureText(it) } ?: 0f
         val wBelow = col.below?.let { textPaint.measureText(it) } ?: 0f
         val textMax = maxOf(wWord, wAbove, wBelow)
@@ -759,7 +760,8 @@ class SuggestionBarView @JvmOverloads constructor(
             val cells = arrayOf(col.above, col.word, col.below)
             val isSelected = selectedRecentBack >= 0 && col.back == selectedRecentBack && !col.inProgress
             for (r in 0 until RECENT_ROWS) {
-                val word = cells[r] ?: continue
+                val rawWord = cells[r] ?: continue
+                val word = if (r == 1) rawWord + col.punct else rawWord
                 val top = r * rowH
                 val paint = if (r == 1) primaryPaint else textPaint
                 if (r == 1) {
