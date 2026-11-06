@@ -176,5 +176,5 @@ internal fun recentJumpTarget(total: Int, savedAfter: Int): Int =
 
 internal fun isRecentWordChar(c: Char): Boolean = c.isLetter() || c == '\''
 
-/** Separators allowed between two recent words: a space, punctuation, a quote. */
-private const val RECENT_MAX_GAP = 4
+/** Separators allowed between two recent words: spaces, punctuation, quotes, newlines. */
+private const val RECENT_MAX_GAP = 32

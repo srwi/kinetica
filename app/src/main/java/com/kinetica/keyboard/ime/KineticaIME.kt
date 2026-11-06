@@ -373,11 +373,13 @@ class KineticaIME : InputMethodService(), GestureEngine.Listener, WordComposer.C
         backspace.target = null
         commit.abandonWord()
         composer?.reset()
-        barContents.recentWords.clear()
-        commit.clearTypingSpeed()
-        selectionLedger.clear()
-        commitHistory.clear()
-        forgetCommitMarks()
+        if (!restarting) {
+            barContents.recentWords.clear()
+            commit.clearTypingSpeed()
+            selectionLedger.clear()
+            commitHistory.clear()
+            forgetCommitMarks()
+        }
         wordState.reopenedContext = null
         backspace.autocorrectUndo = null
         // A field can open with text already selected, so seed from the editor. Either offset
@@ -1057,6 +1059,7 @@ class KineticaIME : InputMethodService(), GestureEngine.Listener, WordComposer.C
         commitTracked(". ")
         autospace.inserted = true
         updateAutoShift()
+        barContents.refreshPredictions()
     }
 
     /**

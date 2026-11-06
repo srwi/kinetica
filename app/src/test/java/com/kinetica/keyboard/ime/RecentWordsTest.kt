@@ -176,4 +176,22 @@ class RecentWordsTest {
         // If text was heavily deleted, clamps to 0
         assertEquals(0, recentJumpTarget(total = 5, savedAfter = 15))
     }
+
+    @Test
+    fun multipleSpacesAndPunctuationDoNotBreakAlignment() {
+        val words = listOf("one", "two", "three")
+        // Double space after word
+        val doubleSpace = alignRecent("one two three  ", 0, words)
+        assertEquals(3, doubleSpace.size)
+        assertEquals("three".length + 2, doubleSpace[0])
+
+        // Period and spaces after word
+        val periodSpaces = alignRecent("one two three.  ", 0, words)
+        assertEquals(3, periodSpaces.size)
+        assertEquals("three".length + 3, periodSpaces[0])
+
+        // Gaps between words with punctuation and multiple spaces
+        val wideGaps = alignRecent("one,   two;   three...   ", 0, words)
+        assertEquals(3, wideGaps.size)
+    }
 }
