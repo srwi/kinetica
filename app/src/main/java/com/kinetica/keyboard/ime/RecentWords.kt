@@ -174,7 +174,7 @@ internal fun matchCase(written: CharSequence, word: String, isSentenceStart: Boo
 internal fun recentJumpTarget(total: Int, savedAfter: Int): Int =
     if (savedAfter >= 0) (total - savedAfter).coerceIn(0, total) else total
 
-private fun isRecentWordChar(c: Char): Boolean = c.isLetter() || c == '\''
+internal fun isRecentWordChar(c: Char): Boolean = c.isLetter() || c == '\''
 
 /** Separators allowed between two recent words: a space, punctuation, a quote. */
 private const val RECENT_MAX_GAP = 4
